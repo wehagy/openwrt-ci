@@ -1,0 +1,128 @@
+# Action to build openwrt images
+---
+name: build openwrt images
+
+on:
+  # Allows manual workflow run (must in default branch to work)
+  workflow_dispatch:
+  # Allows workflow be reusable
+  workflow_call:
+    inputs:
+      commit_long_sha:
+        required: true
+        type: string
+#  push:
+#    branches:
+#      - main
+#    paths:
+#      - 'custom-feed/**'
+
+jobs:
+  build-openwrt-image:
+    runs-on: ubuntu-24.04
+
+    steps:
+      #- name: Checkout
+      #  uses: actions/checkout@v4
+
+      - name: Setup host network
+        run: |
+          sudo nft flush ruleset
+          sudo tee /etc/systemd/network/10-router-lan.network <<EOF
+          [Match]
+          Name=router-lan
+
+          [Network]
+          DHCP=yes
+          EOF
+          sudo systemctl restart systemd-networkd
+
+      - name: Install incus
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            incus \
+            incus-migrate \
+            qemu-system
+
+      - name: Setup incus config
+        run: |
+          sudo incus admin init --auto
+
+          sudo incus profile create router-wan
+          sudo incus profile edit router-wan <<EOF
+          config: {}
+          description: "Router wan network"
+          devices:
+            eth1:
+              name: eth1
+              network: incusbr0
+              type: nic
+          name: router-wan
+          used_by: []
+          project: default
+          EOF
+
+          sudo incus profile create router-lan
+          sudo incus profile edit router-lan <<EOF
+          config: {}
+          description: "Router lan network"
+          devices:
+            eth0:
+              host_name: router-lan
+              name: eth0
+              nictype: p2p
+              type: nic
+          name: router-lan
+          used_by: []
+          project: default
+          EOF
+
+      - name: Import image
+        run: |
+          wget "https://downloads.openwrt.org/snapshots/targets/x86/64/openwrt-x86-64-generic-squashfs-combined-efi.img.gz"
+          gunzip openwrt-x86-64-generic-squashfs-combined-efi.img.gz || true
+          sudo incus-migrate <<ANSWERS
+          yes
+          2
+          openwrt
+          openwrt-x86-64-generic-squashfs-combined-efi.img
+          yes
+          no
+          2
+          default router-wan router-lan
+          1
+          ANSWERS
+          sudo incus start openwrt
+
+      - name: Wait network connection up
+        run: |
+          while true; do
+            # Check if the value is present
+            value_to_find1="inet:"
+            if sudo incus info openwrt | grep -q "${value_to_find1}"; then
+              echo "The value '${value_to_find1}' was found!"
+              break  # Exit the loop if the value is found
+            fi
+            # Wait for an interval before checking again
+            echo "The value '${value_to_find1}' was not found!"
+            sleep "10"
+          done
+          while true; do
+            # Check if the value is present
+            value_to_find2="inet 192.168.1.*/24"
+            if ip a | grep -q "${value_to_find2}"; then
+              echo "The value '${value_to_find2}' was found!"
+              break  # Exit the loop if the value is found
+            fi
+            # Wait for an interval before checking again
+            echo "The value '${value_to_find2}' was not found!"
+            sleep "10"
+          done
+
+      - name: Tests
+        run: |
+          ssh -tt -o StrictHostKeyChecking=no root@192.168.1.1 <<EOF
+          ls -la
+          exit
+          EOF

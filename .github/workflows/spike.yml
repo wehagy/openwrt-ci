@@ -91,7 +91,7 @@ jobs:
           pkgs="${base}/packages/${{ matrix.arch }}/packages"
           ver=$(curl -fsSL "${pkgs}/index.json" | jq -r ".packages.\"${APK_NAME}\"")
           curl -fsSL -o pkg.apk "${pkgs}/${APK_NAME}-${ver}.apk"
-          echo "SPIKE_APK_VERSION=${ver%-r*}" >> "$GITHUB_ENV"
+          echo "SPIKE_APK_VERSION=0.0.0-red" >> "$GITHUB_ENV"
 
       - name: Prepare openwrt-tests
         run: |

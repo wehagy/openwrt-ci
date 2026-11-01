@@ -39,7 +39,7 @@ release=${HARNESS_RELEASE:-}
 if [ -z "${release}" ]; then
 	index_url=$(yq_get "${lines_file}" "${line_key}.releases_index_url")
 	release_regex=$(yq_get "${lines_file}" "${line_key}.release_regex")
-	curl -fsSL --retry 3 -o "${work_dir}/index.html" "${index_url}" ||
+	curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 -o "${work_dir}/index.html" "${index_url}" ||
 		die "cannot fetch ${index_url}"
 	grep -oE "href=\"${release_regex}/\"" "${work_dir}/index.html" \
 		>"${work_dir}/hrefs" || die "no release ${release_regex} at ${index_url}"

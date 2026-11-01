@@ -22,9 +22,9 @@ sums_url=${HARNESS_SHA256SUMS_URL:?HARNESS_SHA256SUMS_URL is required}
 work_dir=${HARNESS_WORK_DIR:-.}
 image_file=${image_url##*/}
 
-curl -fsSL --retry 3 -o "${work_dir}/${image_file}" "${image_url}" ||
+curl -fsSL --retry 3 --connect-timeout 20 --max-time 600 -o "${work_dir}/${image_file}" "${image_url}" ||
 	die "cannot fetch ${image_url}"
-curl -fsSL --retry 3 -o "${work_dir}/sha256sums" "${sums_url}" ||
+curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 -o "${work_dir}/sha256sums" "${sums_url}" ||
 	die "cannot fetch ${sums_url}"
 
 # sha256sums lines are "<hash> *<file>"; compare the file name literally.

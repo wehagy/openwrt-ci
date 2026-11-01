@@ -33,7 +33,7 @@ esac
 case "${source_kind}" in
 feed)
 	feed_url=${HARNESS_FEED_URL:?HARNESS_FEED_URL is required}
-	curl -fsSL --retry 3 -o "${work_dir}/index.json" "${feed_url}/index.json" ||
+	curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 -o "${work_dir}/index.json" "${feed_url}/index.json" ||
 		die "cannot fetch ${feed_url}/index.json"
 	version=$(jq -r --arg p "${package}" '.packages[$p] // empty' "${work_dir}/index.json") ||
 		die "cannot parse ${feed_url}/index.json"
@@ -43,7 +43,7 @@ feed)
 	*[!A-Za-z0-9._+~-]*) die "invalid version for ${package} in ${feed_url}/index.json" ;;
 	*) ;;
 	esac
-	curl -fsSL --retry 3 -o "${work_dir}/pkg.apk" \
+	curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 -o "${work_dir}/pkg.apk" \
 		"${feed_url}/${package}-${version}.apk" ||
 		die "cannot fetch ${feed_url}/${package}-${version}.apk"
 	;;

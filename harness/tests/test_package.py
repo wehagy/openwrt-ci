@@ -161,7 +161,8 @@ def test_services_running(install, vm_ssh, package):
         for line in out:
             if re.match(r"^/?usr/s?bin/", line.strip()):
                 vm_ssh.run_check(
-                    f"printf '#!/bin/sh\\nsleep 2\\n' > /{line.strip().lstrip('/')}"
+                    f"rm -f /{line.strip().lstrip('/')}"
+                    f" && printf '#!/bin/sh\\nsleep 2\\n' > /{line.strip().lstrip('/')}"
                     f" && chmod +x /{line.strip().lstrip('/')}",
                     timeout=QUERY_TIMEOUT,
                 )

@@ -18,7 +18,6 @@ Environment variables:
 """
 
 import json
-import os
 import re
 import shlex
 
@@ -155,16 +154,6 @@ def test_services_running(install, vm_ssh, package):
     names = _init_scripts(vm_ssh, package)
     if not names:
         pytest.skip(f"{package} installs no /etc/init.d script, nothing to check")
-
-    if os.environ.get("HARNESS_MUTATION") == "crashloop":
-        out, _, _ = vm_ssh.run(f"apk info -L {package}", timeout=QUERY_TIMEOUT)
-        for line in out:
-            if re.match(r"^/?usr/s?bin/", line.strip()):
-                vm_ssh.run_check(
-                    f"printf '#!/bin/sh\\nsleep 2\\n' > /{line.strip().lstrip('/')}"
-                    f" && chmod +x /{line.strip().lstrip('/')}",
-                    timeout=QUERY_TIMEOUT,
-                )
 
     failures = [
         f"/etc/init.d/{name} is not a procd script (no USE_PROCD=1)"

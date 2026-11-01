@@ -1,0 +1,143 @@
+# Spike: boot official OpenWrt images in QEMU with aparcar/openwrt-tests and
+# run spike/test_spike.py against them, recording timings per target.
+name: spike openwrt-tests
+
+on:
+  push:
+    branches: [spike/openwrt-tests]
+
+permissions:
+  contents: read
+
+env:
+  OPENWRT_RELEASE: "25.12.6"
+  OPENWRT_TESTS_REF: b3a04b2e08f3ea38e5aa931d4cbe87b30ac8e105
+  APK_NAME: netbird
+  APK_BIN: netbird version
+
+jobs:
+  qemu:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86-64-kvm
+            lg_env: qemu_x86-64.yaml
+            kvm: true
+            arch: x86_64
+            qemu_pkg: qemu-system-x86
+            path: x86/64
+            file: x86-64-generic-squashfs-combined.img.gz
+          - name: x86-64-tcg
+            lg_env: qemu_x86-64.yaml
+            kvm: false
+            arch: x86_64
+            qemu_pkg: qemu-system-x86
+            path: x86/64
+            file: x86-64-generic-squashfs-combined.img.gz
+          - name: armsr-armv8
+            lg_env: qemu_armsr-armv8.yaml
+            kvm: false
+            arch: aarch64_generic
+            qemu_pkg: qemu-system-arm
+            path: armsr/armv8
+            file: armsr-armv8-generic-initramfs-kernel.bin
+          - name: malta-le
+            lg_env: qemu_malta-le.yaml
+            kvm: false
+            arch: mipsel_24kc
+            qemu_pkg: qemu-system-mips
+            path: malta/le
+            file: malta-le-vmlinux-initramfs.elf
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: aparcar/openwrt-tests
+          ref: ${{ env.OPENWRT_TESTS_REF }}
+          path: openwrt-tests
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Enable KVM
+        if: matrix.kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -w /dev/kvm
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.qemu_pkg }}
+
+      - name: Fetch firmware and package
+        run: |
+          base="https://downloads.openwrt.org/releases/${OPENWRT_RELEASE}"
+          file="openwrt-${OPENWRT_RELEASE}-${{ matrix.file }}"
+          curl -fsSLO "${base}/targets/${{ matrix.path }}/${file}"
+          curl -fsSL "${base}/targets/${{ matrix.path }}/sha256sums" \
+            | grep " \*${file}\$" | sha256sum -c -
+          case "${file}" in
+            *.gz) gzip -dc "${file}" > firmware.img || test $? -eq 2 ;;
+            *) mv "${file}" firmware.img ;;
+          esac
+          pkgs="${base}/packages/${{ matrix.arch }}/packages"
+          ver=$(curl -fsSL "${pkgs}/index.json" | jq -r ".packages.\"${APK_NAME}\"")
+          curl -fsSL -o pkg.apk "${pkgs}/${APK_NAME}-${ver}.apk"
+          echo "SPIKE_APK_VERSION=${ver%-r*}" >> "$GITHUB_ENV"
+
+      - name: Prepare openwrt-tests
+        run: |
+          mkdir -p openwrt-tests/tests/ext
+          cp spike/test_spike.py openwrt-tests/tests/ext/
+          lg_env="${{ matrix.lg_env }}"
+          if [ "${{ matrix.kvm }}" = true ]; then
+            sed 's|extra_args: "|extra_args: "-enable-kvm |' \
+              "openwrt-tests/targets/${lg_env}" > openwrt-tests/targets/kvm-${lg_env}
+            lg_env="kvm-${lg_env}"
+          fi
+          echo "LG_ENV_FILE=openwrt-tests/targets/${lg_env}" >> "$GITHUB_ENV"
+          uv --project openwrt-tests sync
+
+      - name: Run spike tests
+        env:
+          SPIKE_RELEASE: ${{ env.OPENWRT_RELEASE }}
+          SPIKE_APK_BIN: ${{ env.APK_BIN }}
+        run: |
+          mkdir -p logs
+          start=$(date +%s)
+          rc=0
+          SPIKE_APK="$PWD/pkg.apk" uv --project openwrt-tests run pytest \
+            openwrt-tests/tests/ext -vv --durations=0 \
+            --rootdir=openwrt-tests --confcutdir=openwrt-tests \
+            --lg-env "${LG_ENV_FILE}" --firmware "$PWD/firmware.img" \
+            --lg-log=logs --log-cli-level=CONSOLE --junitxml=results.xml || rc=$?
+          total=$(( $(date +%s) - start ))
+          {
+            echo "### ${{ matrix.name }}"
+            echo "- kvm: ${{ matrix.kvm }}"
+            echo "- pytest exit: ${rc}, total: ${total} s"
+            grep -o '<testcase [^>]*>' results.xml \
+              | sed -E 's/.* name="([^"]+)".* time="([^"]+)".*/- \1: \2 s/'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "${rc}"
+
+      - name: Record resolved dependencies
+        if: always()
+        run: uv --project openwrt-tests pip freeze > logs/pip-freeze.txt
+
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: spike-${{ matrix.name }}
+          path: |
+            results.xml
+            logs/
+          if-no-files-found: warn

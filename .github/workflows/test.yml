@@ -28,7 +28,33 @@ env:
   UV_PYTHON: "3.13"
 
 jobs:
+  # The QEMU targets come from harness/targets.yml, not from this file.
+  targets:
+    name: targets ${{ inputs.line }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate inputs
+        env:
+          HARNESS_LINE: ${{ inputs.line }}
+          HARNESS_PACKAGE: ${{ inputs.package }}
+          HARNESS_SOURCE: ${{ inputs.source }}
+        run: scripts/validate-inputs.sh
+
+      - name: Build matrix
+        id: matrix
+        env:
+          LINE: ${{ inputs.line }}
+        run: scripts/matrix.sh "${LINE}" | tee -a "${GITHUB_OUTPUT}"
+
   qemu:
+    needs: targets
     name: ${{ inputs.line }} ${{ matrix.target }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -38,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [x86-64, armsr-armv8, malta-le]
+        target: ${{ fromJSON(needs.targets.outputs.matrix).target }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:

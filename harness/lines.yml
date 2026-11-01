@@ -8,6 +8,8 @@
 #   sdk_tag_suffix           suffix of the SDK container tag
 #   packages_branch          branch of the openwrt/packages feed
 #   imagebuilder_tag_suffix  suffix of the ImageBuilder container tag
+#                            (these three are not read yet: the build slice
+#                            (P2) consumes them; keep them)
 #   releases_index_url       HTML directory listing scanned for releases
 #   release_regex            ERE of release directory names; the highest
 #                            version (sort -V) wins, so -rcN never matches

@@ -103,6 +103,9 @@ def test_services_running(install, vm_ssh, package):
 
     failures = []
     for name in scripts:
+        # apk may already have started the service; restart it so the check
+        # proves it can start, not that an old process survived.
+        vm_ssh.run(f"/etc/init.d/{name} stop", timeout=CMD_TIMEOUT)
         _, _, start_rc = vm_ssh.run(f"/etc/init.d/{name} start", timeout=CMD_TIMEOUT)
         ok, detail = poll(lambda n=name: _service_running(vm_ssh, n), SERVICE_TIMEOUT)
         if not ok:

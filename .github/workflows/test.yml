@@ -129,8 +129,6 @@ jobs:
           uv --project openwrt-tests sync --locked
 
       - name: Run tests
-        env:
-          HARNESS_MUTATION: nonprocd
         run: |
           mkdir -p logs
           start=$(date +%s)

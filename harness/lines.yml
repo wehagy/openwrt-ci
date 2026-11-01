@@ -1,0 +1,26 @@
+# Responsibility: per-OpenWrt-line data used by the harness scripts.
+#
+# One table per line, keyed by the line name. Placeholders expanded by
+# scripts/resolve.sh: {release} (resolved at run time), {path} and {arch}
+# (from harness/targets.yml).
+#
+# Keys:
+#   sdk_tag_suffix           suffix of the SDK container tag
+#   packages_branch          branch of the openwrt/packages feed
+#   imagebuilder_tag_suffix  suffix of the ImageBuilder container tag
+#   releases_index_url       HTML directory listing scanned for releases
+#   release_regex            ERE of release directory names; the highest
+#                            version (sort -V) wins, so -rcN never matches
+#   image_base_url           directory holding the images and sha256sums
+#   feed_base_url            official apk feed (index.json and *.apk)
+
+lines:
+  "25.12":
+    sdk_tag_suffix: openwrt-25.12
+    packages_branch: openwrt-25.12
+    imagebuilder_tag_suffix: openwrt-25.12
+    releases_index_url: https://downloads.openwrt.org/releases/
+    release_regex: '25\.12\.[0-9]+'
+    image_base_url: https://downloads.openwrt.org/releases/{release}/targets/{path}
+    feed_base_url: https://downloads.openwrt.org/releases/{release}/packages/{arch}/packages
+  # "main": added by slice P1b (snapshots have no release directory).

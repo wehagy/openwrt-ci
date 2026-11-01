@@ -1,0 +1,115 @@
+# Reusable workflow: boot official OpenWrt images in QEMU (aparcar/openwrt-tests)
+# and run the generic package test of harness/tests against one package.
+name: test
+
+on:
+  workflow_call:
+    inputs:
+      line:
+        description: OpenWrt line, a key of harness/lines.yml (e.g. "25.12")
+        type: string
+        required: true
+      package:
+        description: Package name to install and check
+        type: string
+        required: true
+      source:
+        description: Where the .apk comes from (feed)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  OPENWRT_TESTS_REF: b3a04b2e08f3ea38e5aa931d4cbe87b30ac8e105
+
+jobs:
+  qemu:
+    name: ${{ inputs.line }} ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash # adds pipefail, so `script | tee` keeps the script's status
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86-64, armsr-armv8, malta-le]
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: aparcar/openwrt-tests
+          ref: ${{ env.OPENWRT_TESTS_REF }}
+          path: openwrt-tests
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Resolve line and target
+        env:
+          LINE: ${{ inputs.line }}
+          TARGET: ${{ matrix.target }}
+        run: scripts/resolve.sh "${LINE}" "${TARGET}" | tee -a "${GITHUB_ENV}"
+
+      - name: Enable KVM
+        if: env.HARNESS_KVM == 'true'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          # trigger is asynchronous; wait for udev before checking permissions.
+          sudo udevadm settle
+          test -w /dev/kvm
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y "${HARNESS_QEMU_PKG}"
+
+      - name: Fetch image
+        run: scripts/fetch-image.sh | tee -a "${GITHUB_ENV}"
+
+      - name: Fetch package
+        env:
+          HARNESS_SOURCE: ${{ inputs.source }}
+          HARNESS_PACKAGE: ${{ inputs.package }}
+        run: |
+          echo "HARNESS_PACKAGE=${HARNESS_PACKAGE}" >> "${GITHUB_ENV}"
+          scripts/fetch-package.sh | tee -a "${GITHUB_ENV}"
+
+      - name: Prepare openwrt-tests
+        run: |
+          mkdir -p openwrt-tests/tests/ext
+          cp harness/tests/*.py openwrt-tests/tests/ext/
+          scripts/prepare-target.sh | tee -a "${GITHUB_ENV}"
+          uv --project openwrt-tests sync
+
+      - name: Run tests
+        run: |
+          mkdir -p logs
+          start=$(date +%s)
+          rc=0
+          uv --project openwrt-tests run pytest openwrt-tests/tests/ext -vv \
+            --durations=0 --rootdir=openwrt-tests --confcutdir=openwrt-tests \
+            --lg-env "${HARNESS_LG_ENV_FILE}" --firmware "${HARNESS_FIRMWARE}" \
+            --lg-log=logs --log-cli-level=CONSOLE --junitxml=results.xml \
+            -o junit_family=xunit1 || rc=$?
+          scripts/summary.sh results.xml "${rc}" "$(( $(date +%s) - start ))" \
+            >> "${GITHUB_STEP_SUMMARY}"
+          exit "${rc}"
+
+      - name: Record resolved dependencies
+        if: always()
+        run: uv pip freeze --python openwrt-tests/.venv | tee logs/pip-freeze.txt
+
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: qemu-${{ inputs.line }}-${{ matrix.target }}
+          path: |
+            results.xml
+            logs/
+          if-no-files-found: warn

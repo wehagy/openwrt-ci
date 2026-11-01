@@ -1,0 +1,17 @@
+# Caller: test the package on every push to a feature branch.
+name: ci
+
+on:
+  push:
+    branches: ["feat/**"] # main is added when the main line exists
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+    with:
+      line: "25.12"
+      package: netbird
+      source: feed

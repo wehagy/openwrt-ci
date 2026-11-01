@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Responsibility: print the Markdown job summary of one QEMU test job
-# (line, target, image, package, pytest exit, per-test times, junit
-# properties) from the HARNESS_* variables and the junit file.
+# (line, target, image, package, pytest exit, per-test status and time,
+# junit properties) from the HARNESS_* variables and the junit file.
 #
 # Usage:
 #   scripts/summary.sh <results.xml> <pytest-exit> <total-seconds> >> "$GITHUB_STEP_SUMMARY"
@@ -50,12 +50,47 @@ if [ ! -f "${results}" ]; then
 	exit 0
 fi
 
+# One line per testcase: status (passed/failed/skipped), name, time and, for a
+# skip, its reason. pytest writes the whole junit file on one line, so the
+# file is split at each "<testcase " first. A <failure> or <error> element
+# counts as failed.
 printf '\nTests:\n'
-if grep -o '<testcase [^>]*>' "${results}" >"${work_dir}/cases"; then
-	sed -E 's/.* name="([^"]+)".* time="([^"]+)".*/- \1: \2 s/' "${work_dir}/cases"
-else
-	printf -- '- none recorded\n'
-fi
+sed -e 's/<testcase /\n<testcase /g' "${results}" >"${work_dir}/split"
+awk '
+function attr(text, key,    pos, rest) {
+	pos = match(text, " " key "=\"[^\"]*\"")
+	if (pos == 0) {
+		return ""
+	}
+	rest = substr(text, RSTART + length(key) + 3)
+	return substr(rest, 1, index(rest, "\"") - 1)
+}
+/^<testcase / {
+	chunk = $0
+	sub(/<\/testcase>.*/, "", chunk)
+	status = "passed"
+	reason = ""
+	if (chunk ~ /<(failure|error)[ >\/]/) {
+		status = "failed"
+	} else if (chunk ~ /<skipped[ >\/]/) {
+		status = "skipped"
+		reason = attr(substr(chunk, index(chunk, "<skipped")), "message")
+	}
+	count[status]++
+	line = "- " status ": " attr(chunk, "name") " (" attr(chunk, "time") " s)"
+	if (reason != "") {
+		line = line " - " reason
+	}
+	print line
+}
+END {
+	if (count["passed"] + count["failed"] + count["skipped"] == 0) {
+		print "- none recorded"
+	} else {
+		printf "\ntotals: %d passed, %d failed, %d skipped\n", count["passed"], count["failed"], count["skipped"]
+	}
+}
+' "${work_dir}/split"
 
 printf '\nJunit properties:\n'
 if grep -o '<property name="[^"]*" value="[^"]*"' "${results}" >"${work_dir}/props"; then

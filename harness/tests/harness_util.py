@@ -16,15 +16,25 @@ def env(name):
     return value
 
 
-def poll(check, timeout_s, interval_s=POLL_INTERVAL):
+def poll(check, timeout_s, interval_s=POLL_INTERVAL, stable_s=0.0):
     """Call check() until it reports success or the deadline passes.
 
-    check returns (ok, detail). Returns (ok, detail) of the last call, so the
-    caller can put the last observed state in its assertion message.
+    check returns (ok, detail). Success needs ok for stable_s seconds without
+    interruption, so a state that holds only for an instant does not count.
+    Returns (ok, detail) of the last call, so the caller can put the last
+    observed state in its assertion message.
     """
     deadline = time.monotonic() + timeout_s
+    ok_since = None
     while True:
         ok, detail = check()
-        if ok or time.monotonic() >= deadline:
-            return ok, detail
+        now = time.monotonic()
+        if not ok:
+            ok_since = None
+        elif ok_since is None:
+            ok_since = now
+        if ok and now - ok_since >= stable_s:
+            return True, detail
+        if now >= deadline:
+            return False, detail
         time.sleep(interval_s)

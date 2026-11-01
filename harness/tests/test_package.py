@@ -24,6 +24,9 @@ from harness_util import env, poll
 # Emulated targets are slow; labgrid's run_check default is 30 s.
 CMD_TIMEOUT = 600
 SERVICE_TIMEOUT = 60
+# procd reports an instance running right after the fork, before a missing
+# binary makes exec fail; only a state that holds counts.
+SERVICE_STABLE = 10
 REMOTE_APK = "/tmp/package-under-test.apk"
 INIT_SCRIPT = re.compile(r"^/?etc/init\.d/([^/\s]+)$")
 
@@ -107,10 +110,15 @@ def test_services_running(install, vm_ssh, package):
         # proves it can start, not that an old process survived.
         vm_ssh.run(f"/etc/init.d/{name} stop", timeout=CMD_TIMEOUT)
         _, _, start_rc = vm_ssh.run(f"/etc/init.d/{name} start", timeout=CMD_TIMEOUT)
-        ok, detail = poll(lambda n=name: _service_running(vm_ssh, n), SERVICE_TIMEOUT)
+        ok, detail = poll(
+            lambda n=name: _service_running(vm_ssh, n),
+            SERVICE_TIMEOUT,
+            stable_s=SERVICE_STABLE,
+        )
         if not ok:
             failures.append(
-                f"service {name} not running after {SERVICE_TIMEOUT} s"
+                f"service {name} not running (needs {SERVICE_STABLE} s stable,"
+                f" waited {SERVICE_TIMEOUT} s)"
                 f" (start rc={start_rc}): {detail}"
             )
     assert not failures, "\n".join(failures)

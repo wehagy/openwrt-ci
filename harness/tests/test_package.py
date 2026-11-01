@@ -16,6 +16,7 @@ Environment variables:
 """
 
 import json
+import os
 import re
 
 import pytest
@@ -100,6 +101,12 @@ def test_services_running(install, vm_ssh, package):
     scripts = [s for s in _init_scripts(vm_ssh, package) if _is_procd(vm_ssh, s)]
     if not scripts:
         pytest.skip(f"{package} ships no procd init script")
+
+    if os.environ.get("HARNESS_SABOTAGE_DELETE_BINARY"):
+        out, _, _ = vm_ssh.run(f"apk info -L {package}")
+        for line in out:
+            if re.match(r"^/?usr/s?bin/", line.strip()):
+                vm_ssh.run_check(f"rm -f /{line.strip().lstrip('/')}")
 
     failures = []
     for name in scripts:

@@ -15,18 +15,3 @@ jobs:
     with:
       line: "25.12"
       package: netbird
-
-  build-main:
-    uses: ./.github/workflows/build.yml
-    with:
-      line: main
-      package: netbird
-
-  # Line main is only built: it has no QEMU images until slice P1b adds them.
-  test-25-12:
-    needs: build-25-12
-    uses: ./.github/workflows/test.yml
-    with:
-      line: "25.12"
-      package: netbird
-      source: artifact

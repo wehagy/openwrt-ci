@@ -41,9 +41,20 @@ jobs:
         target: [x86-64, armsr-armv8, malta-le]
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # Nothing derived from an input is written to GITHUB_ENV before this.
+      - name: Validate inputs
+        env:
+          HARNESS_LINE: ${{ inputs.line }}
+          HARNESS_PACKAGE: ${{ inputs.package }}
+          HARNESS_SOURCE: ${{ inputs.source }}
+        run: scripts/validate-inputs.sh
 
       - uses: actions/checkout@v7.0.1
         with:
+          persist-credentials: false
           repository: aparcar/openwrt-tests
           ref: ${{ env.OPENWRT_TESTS_REF }}
           path: openwrt-tests
@@ -79,9 +90,7 @@ jobs:
         env:
           HARNESS_SOURCE: ${{ inputs.source }}
           HARNESS_PACKAGE: ${{ inputs.package }}
-        run: |
-          echo "HARNESS_PACKAGE=${HARNESS_PACKAGE}" >> "${GITHUB_ENV}"
-          scripts/fetch-package.sh | tee -a "${GITHUB_ENV}"
+        run: scripts/fetch-package.sh | tee -a "${GITHUB_ENV}"
 
       - name: Prepare openwrt-tests
         run: |

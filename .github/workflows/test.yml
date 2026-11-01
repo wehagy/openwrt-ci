@@ -14,7 +14,9 @@ on:
         type: string
         required: true
       source:
-        description: Where the .apk comes from (feed)
+        description: >-
+          Where the .apk comes from: feed (official release feed) or artifact
+          (apk-<line>-<arch> uploaded by build.yml in the same workflow run)
         type: string
         required: true
 
@@ -124,10 +126,17 @@ jobs:
       - name: Fetch image
         run: scripts/fetch-image.sh | tee -a "${GITHUB_ENV}"
 
+      - uses: actions/download-artifact@v8.0.2
+        if: inputs.source == 'artifact'
+        with:
+          name: apk-${{ inputs.line }}-${{ env.HARNESS_ARCH }}
+          path: apk-artifact
+
       - name: Fetch package
         env:
           HARNESS_SOURCE: ${{ inputs.source }}
           HARNESS_PACKAGE: ${{ inputs.package }}
+          HARNESS_ARTIFACT_DIR: apk-artifact
         run: scripts/fetch-package.sh | tee -a "${GITHUB_ENV}"
 
       - name: Prepare openwrt-tests

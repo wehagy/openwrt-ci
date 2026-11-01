@@ -1,0 +1,89 @@
+# Reusable workflow: build one package for the 5 architectures of a line with
+# the official OpenWrt SDK (openwrt/gh-action-sdk, as the openwrt/packages CI
+# does) from the openwrt/packages branch of that line, and upload the .apk.
+name: build
+
+on:
+  workflow_call:
+    inputs:
+      line:
+        description: OpenWrt line, a key of harness/lines.yml (e.g. "25.12")
+        type: string
+        required: true
+      package:
+        description: Package name to build (a directory of openwrt/packages)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  sdk:
+    name: ${{ inputs.line }} ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64_generic, aarch64_cortex-a53, mipsel_24kc, mips_24kc]
+    defaults:
+      run:
+        shell: bash # adds pipefail, so `script | tee` keeps the script's status
+    env:
+      HARNESS_PACKAGE: ${{ inputs.package }}
+      SDK_OUT: ${{ github.workspace }}/sdk-out
+      APK_OUT: ${{ github.workspace }}/apk-out
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Resolve line and arch
+        env:
+          LINE: ${{ inputs.line }}
+          ARCH: ${{ matrix.arch }}
+        run: scripts/resolve-build.sh "${LINE}" "${ARCH}" | tee -a "${GITHUB_ENV}"
+
+      # A full tree, not just the package: Go packages include
+      # ../../lang/golang/golang-package.mk by relative path.
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: openwrt/packages
+          ref: ${{ env.HARNESS_PACKAGES_BRANCH }}
+          path: packages-feed
+
+      - name: Record feed commit and SDK image digest
+        run: |
+          sha=$(git -C packages-feed rev-parse HEAD)
+          digest=$(docker buildx imagetools inspect "${HARNESS_SDK_IMAGE}" \
+            --format '{{.Manifest.Digest}}')
+          start=$(date +%s)
+          mkdir -p "${SDK_OUT}"
+          {
+            echo "HARNESS_PACKAGES_SHA=${sha}"
+            echo "HARNESS_SDK_DIGEST=${digest}"
+            echo "HARNESS_BUILD_START=${start}"
+          } >> "${GITHUB_ENV}"
+
+      # Pinned to a commit of the action's main branch.
+      - uses: openwrt/gh-action-sdk@f5813d30eeef3534b58ac7e79c5d8842b6035434
+        env:
+          CONTAINER: ${{ env.HARNESS_SDK_CONTAINER }}
+          ARCH: ${{ env.HARNESS_SDK_ARCH }}
+          FEED_DIR: ${{ github.workspace }}/packages-feed
+          ARTIFACTS_DIR: ${{ env.SDK_OUT }}
+          PACKAGES: ${{ inputs.package }}
+
+      - name: Collect the package
+        run: |
+          now=$(date +%s)
+          echo "HARNESS_BUILD_SECONDS=$(( now - HARNESS_BUILD_START ))" >> "${GITHUB_ENV}"
+          scripts/collect-apk.sh "${SDK_OUT}/bin/packages" "${APK_OUT}" | tee -a "${GITHUB_ENV}"
+
+      - name: Summary
+        run: scripts/build-summary.sh >> "${GITHUB_STEP_SUMMARY}"
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: apk-${{ inputs.line }}-${{ matrix.arch }}
+          path: ${{ env.APK_OUT }}
+          if-no-files-found: error

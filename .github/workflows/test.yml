@@ -129,6 +129,8 @@ jobs:
           uv --project openwrt-tests sync --locked
 
       - name: Run tests
+        env:
+          HARNESS_MUTATION: crashloop
         run: |
           mkdir -p logs
           start=$(date +%s)

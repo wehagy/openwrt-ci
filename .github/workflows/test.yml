@@ -23,6 +23,9 @@ permissions:
 
 env:
   OPENWRT_TESTS_REF: b3a04b2e08f3ea38e5aa931d4cbe87b30ac8e105
+  # Python for the openwrt-tests environment; harness/openwrt-tests.uv.lock
+  # was generated with this version from the pyproject.toml at the ref above.
+  UV_PYTHON: "3.13"
 
 jobs:
   qemu:
@@ -85,14 +88,17 @@ jobs:
           mkdir -p openwrt-tests/tests/ext
           cp harness/tests/*.py openwrt-tests/tests/ext/
           scripts/prepare-target.sh | tee -a "${GITHUB_ENV}"
-          uv --project openwrt-tests sync
+          # The lock pins every dependency (labgrid is a git branch upstream);
+          # --locked fails the job if it no longer matches the pyproject.toml.
+          cp harness/openwrt-tests.uv.lock openwrt-tests/uv.lock
+          uv --project openwrt-tests sync --locked
 
       - name: Run tests
         run: |
           mkdir -p logs
           start=$(date +%s)
           rc=0
-          uv --project openwrt-tests run pytest openwrt-tests/tests/ext -vv \
+          uv --project openwrt-tests run --locked pytest openwrt-tests/tests/ext -vv \
             --durations=0 --rootdir=openwrt-tests --confcutdir=openwrt-tests \
             --lg-env "${HARNESS_LG_ENV_FILE}" --firmware "${HARNESS_FIRMWARE}" \
             --lg-log=logs --log-cli-level=CONSOLE --junitxml=results.xml \

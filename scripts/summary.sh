@@ -52,7 +52,7 @@ fi
 
 printf '\nTests:\n'
 if grep -o '<testcase [^>]*>' "${results}" >"${work_dir}/cases"; then
-	sed -E 's/.* name="([^"]+)" time="([^"]+)".*/- \1: \2 s/' "${work_dir}/cases"
+	sed -E 's/.* name="([^"]+)".* time="([^"]+)".*/- \1: \2 s/' "${work_dir}/cases"
 else
 	printf -- '- none recorded\n'
 fi

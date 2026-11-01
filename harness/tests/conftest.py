@@ -10,14 +10,26 @@ CI environment fixes, measured in the spike (runs 41354702952 and later):
       record, so fetches that pick IPv6 fail with EPERM. dnsmasq therefore
       filters AAAA answers.
   F2  malta-le 25.12 board.json defines only lan; without a wan interface
-      the VM has no default route. wan is created (dhcp on eth1) if missing.
+      the VM has no default route. wan is created (dhcp on eth1) if the
+      configuration has none. The decision reads the uci configuration, not
+      the runtime state: netifd may not have loaded an existing wan yet.
+
+After F1 and F2 the setup waits until the VM resolves an A record for
+downloads.openwrt.org and has a default route, so the tests start from a
+network that works.
 """
+
+import re
 
 import pytest
 from harness_util import poll
 
 CMD_TIMEOUT = 600
+# Every command of a poll is short; a hung ssh must not outlive the deadline.
+QUERY_TIMEOUT = 30
 NETWORK_TIMEOUT = 120
+DNS_NAME = "downloads.openwrt.org"
+IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
 
 @pytest.fixture(scope="session")
@@ -36,8 +48,10 @@ def ci_network(vm_ssh):
         timeout=CMD_TIMEOUT,
     )
 
-    _, _, rc = vm_ssh.run("ubus call network.interface.wan status")
-    if rc != 0:
+    # rc 0: wan is configured (leave it alone); rc 1: no such section.
+    _, _, rc = vm_ssh.run("uci -q get network.wan", timeout=QUERY_TIMEOUT)
+    assert rc in (0, 1), f"uci -q get network.wan failed with {rc}"
+    if rc == 1:
         vm_ssh.run_check(
             "uci set network.wan=interface"
             " && uci set network.wan.device=eth1"
@@ -48,10 +62,34 @@ def ci_network(vm_ssh):
 
     def has_default_route():
         # BusyBox `ip route show default` does not filter, so match here.
-        out, _, _ = vm_ssh.run("ip route")
+        out, _, _ = vm_ssh.run("ip route", timeout=QUERY_TIMEOUT)
         return any(line.startswith("default ") for line in out), out
 
-    ok, detail = poll(has_default_route, NETWORK_TIMEOUT)
-    assert ok, f"no default route after {NETWORK_TIMEOUT} s: {detail}"
+    def resolves_a_record():
+        # BusyBox nslookup prints the server first, then "Name:" followed by
+        # the answers; only an IPv4 address after "Name:" is an A record.
+        out, _, _ = vm_ssh.run(f"nslookup {DNS_NAME}", timeout=QUERY_TIMEOUT)
+        after_name = False
+        found = False
+        for line in out:
+            if line.strip().startswith("Name:"):
+                after_name = True
+            elif after_name and "Address" in line:
+                found = found or bool(IPV4.search(line))
+        return found, out
+
+    def network_works():
+        route_ok, route = has_default_route()
+        dns_ok, dns = resolves_a_record()
+        return (
+            route_ok and dns_ok,
+            f"default route: {route_ok} {route}; dns: {dns_ok} {dns}",
+        )
+
+    ok, detail = poll(network_works, NETWORK_TIMEOUT)
+    assert ok, (
+        f"network not ready after {NETWORK_TIMEOUT} s (needs a default route"
+        f" and an A record for {DNS_NAME}): {detail}"
+    )
 
     vm_ssh.run_check("apk update", timeout=CMD_TIMEOUT)

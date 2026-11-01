@@ -77,6 +77,7 @@ qemu_pkg=$(yq_get "${targets_file}" "${target_key}.qemu_pkg")
 printf 'HARNESS_LINE=%s\n' "${LINE}"
 printf 'HARNESS_TARGET=%s\n' "${TARGET}"
 printf 'HARNESS_RELEASE=%s\n' "${release}"
+printf 'HARNESS_ARCH=%s\n' "${arch}"
 printf 'HARNESS_IMAGE_URL=%s/%s\n' "${image_base}" "${image_file}"
 printf 'HARNESS_SHA256SUMS_URL=%s/sha256sums\n' "${image_base}"
 printf 'HARNESS_FEED_URL=%s\n' "${feed_url}"

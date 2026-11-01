@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 # Responsibility: fetch the .apk of the package under test from its source
-# and print its location and version. Only source "feed" (the official
-# release feed of the line) exists; "artifact" is added by a later slice.
+# and print its location and version. Sources: "feed" (the official release
+# feed of the line) and "artifact" (the .apk built by the build workflow and
+# downloaded to a directory).
 # The package name and the version are validated before they are printed,
 # so the output is safe to append to GITHUB_ENV.
 #
@@ -9,9 +10,11 @@
 #   scripts/fetch-package.sh >> "$GITHUB_ENV"
 #
 # Environment variables:
-#   HARNESS_SOURCE    package source: feed (required)
+#   HARNESS_SOURCE    package source: feed or artifact (required)
 #   HARNESS_PACKAGE   package name (required)
 #   HARNESS_FEED_URL  feed directory with index.json (required for feed)
+#   HARNESS_ARTIFACT_DIR  directory holding the built .apk (required for
+#                         artifact)
 #   HARNESS_WORK_DIR  where files are written (default: .)
 
 set -eu
@@ -25,10 +28,7 @@ source_kind=${HARNESS_SOURCE:?HARNESS_SOURCE is required}
 package=${HARNESS_PACKAGE:?HARNESS_PACKAGE is required}
 work_dir=${HARNESS_WORK_DIR:-.}
 
-case "${package}" in
-*[!a-z0-9._+-]* | '') die "invalid package name: ${package}" ;;
-*) ;;
-esac
+check_package_name "${package}"
 
 case "${source_kind}" in
 feed)
@@ -39,13 +39,16 @@ feed)
 		die "cannot parse ${feed_url}/index.json"
 	[ -n "${version}" ] || die "${package} not in ${feed_url}/index.json"
 	# The version comes from a remote file; keep it to the apk version charset.
-	case "${version}" in
-	*[!A-Za-z0-9._+~-]*) die "invalid version for ${package} in ${feed_url}/index.json" ;;
-	*) ;;
-	esac
+	check_apk_version "${version}"
 	curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 -o "${work_dir}/pkg.apk" \
 		"${feed_url}/${package}-${version}.apk" ||
 		die "cannot fetch ${feed_url}/${package}-${version}.apk"
+	;;
+artifact)
+	artifact_dir=${HARNESS_ARTIFACT_DIR:?HARNESS_ARTIFACT_DIR is required}
+	apk_file=$(find_apk "${artifact_dir}" "${package}")
+	version=$(apk_version "${apk_file}" "${package}")
+	cp "${apk_file}" "${work_dir}/pkg.apk" || die "cannot copy ${apk_file}"
 	;;
 *)
 	die "unsupported package source: ${source_kind}"

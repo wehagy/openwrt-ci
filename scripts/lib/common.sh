@@ -25,3 +25,70 @@ yq_get() {
 	[ "${yq_value}" != null ] || die "missing key in $1: $2"
 	printf '%s\n' "${yq_value}"
 }
+
+# Abort unless the argument is a valid package name: [a-z0-9][a-z0-9._+-]*,
+# at most 128 chars. The value is never echoed: a newline or a "::" prefix
+# could otherwise forge workflow commands in the log.
+#
+# Arguments:
+#   $1  package name
+check_package_name() {
+	case "$1" in
+	*[!a-z0-9._+-]* | [!a-z0-9]* | '') die "invalid package name (allowed: [a-z0-9][a-z0-9._+-]*)" ;;
+	*) ;;
+	esac
+	[ "${#1}" -le 128 ] || die "invalid package name (longer than 128 chars)"
+}
+
+# Abort unless the argument is a valid OpenWrt line: "main" or NN.NN. The
+# value is never echoed (see check_package_name).
+#
+# Arguments:
+#   $1  line
+check_line() {
+	case "$1" in
+	main | [0-9][0-9].[0-9][0-9]) ;;
+	*) die "invalid line (allowed: main or NN.NN)" ;;
+	esac
+}
+
+# Abort unless the argument stays within the apk version charset. The value
+# is never echoed (see check_package_name).
+#
+# Arguments:
+#   $1  package version
+check_apk_version() {
+	case "$1" in
+	*[!A-Za-z0-9._+~-]* | '') die "invalid package version (allowed: [A-Za-z0-9._+~-]+)" ;;
+	*) ;;
+	esac
+}
+
+# Print the path of the one <package>-<version>.apk below a directory; no
+# match or several matches are an error (e.g. netbird-ui must not count).
+#
+# Arguments:
+#   $1  directory to search
+#   $2  package name
+find_apk() {
+	find_apk_list=$(find "$1" -type f -name "$2-[0-9]*.apk") ||
+		die "cannot search $1"
+	[ -n "${find_apk_list}" ] || die "no $2 .apk below $1"
+	find_apk_count=$(printf '%s\n' "${find_apk_list}" | wc -l)
+	[ "${find_apk_count}" -eq 1 ] ||
+		die "expected one $2 .apk below $1, found ${find_apk_count}: ${find_apk_list}"
+	printf '%s\n' "${find_apk_list}"
+}
+
+# Print the version of a <package>-<version>.apk file, e.g. 0.78.1-r1.
+#
+# Arguments:
+#   $1  path of the .apk
+#   $2  package name
+apk_version() {
+	apk_base=$(basename "$1")
+	apk_ver=${apk_base#"$2-"}
+	apk_ver=${apk_ver%.apk}
+	check_apk_version "${apk_ver}"
+	printf '%s\n' "${apk_ver}"
+}

@@ -8,13 +8,15 @@
 #   sdk_tag_suffix           suffix of the SDK container tag
 #   packages_branch          branch of the openwrt/packages feed
 #   imagebuilder_tag_suffix  suffix of the ImageBuilder container tag
-#                            (these three are not read yet: the build slice
-#                            (P2) consumes them; keep them)
+#                            (not read yet; keep it)
 #   releases_index_url       HTML directory listing scanned for releases
 #   release_regex            ERE of release directory names; the highest
 #                            version (sort -V) wins, so -rcN never matches
 #   image_base_url           directory holding the images and sha256sums
 #   feed_base_url            official apk feed (index.json and *.apk)
+#
+# The build workflow reads sdk_tag_suffix and packages_branch; the QEMU test
+# workflow reads the last four keys.
 
 lines:
   "25.12":
@@ -25,4 +27,10 @@ lines:
     release_regex: '25\.12\.[0-9]+'
     image_base_url: https://downloads.openwrt.org/releases/{release}/targets/{path}
     feed_base_url: https://downloads.openwrt.org/releases/{release}/packages/{arch}/packages
-  # "main": added by slice P1b (snapshots have no release directory).
+  main:
+    sdk_tag_suffix: main
+    packages_branch: master
+    imagebuilder_tag_suffix: main
+    # releases_index_url, release_regex, image_base_url and feed_base_url are
+    # absent on purpose: slice P1b adds them with the snapshot QEMU images.
+    # Until then scripts/resolve.sh fails for this line (missing key).

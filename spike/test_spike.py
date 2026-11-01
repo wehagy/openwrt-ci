@@ -16,6 +16,8 @@ CMD_TIMEOUT = 600
 
 def test_boot_release(shell_command):
     out = shell_command.run_check("cat /etc/openwrt_release")
+    # Diagnostic only: memory and tmpfs headroom land in the console log.
+    shell_command.run("free -m; df -h / /tmp")
     assert f"DISTRIB_RELEASE='{os.environ['SPIKE_RELEASE']}'" in out
 
 

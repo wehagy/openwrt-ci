@@ -25,6 +25,7 @@ jobs:
       matrix:
         include:
           - name: x86-64-kvm
+            memory: 128M
             lg_env: qemu_x86-64.yaml
             kvm: true
             arch: x86_64
@@ -32,6 +33,7 @@ jobs:
             path: x86/64
             file: x86-64-generic-squashfs-combined.img.gz
           - name: x86-64-tcg
+            memory: 128M
             lg_env: qemu_x86-64.yaml
             kvm: false
             arch: x86_64
@@ -39,6 +41,7 @@ jobs:
             path: x86/64
             file: x86-64-generic-squashfs-combined.img.gz
           - name: armsr-armv8
+            memory: 256M
             lg_env: qemu_armsr-armv8.yaml
             kvm: false
             arch: aarch64_generic
@@ -46,6 +49,7 @@ jobs:
             path: armsr/armv8
             file: armsr-armv8-generic-initramfs-kernel.bin
           - name: malta-le
+            memory: 256M
             lg_env: qemu_malta-le.yaml
             kvm: false
             arch: mipsel_24kc
@@ -97,13 +101,16 @@ jobs:
         run: |
           mkdir -p openwrt-tests/tests/ext
           cp spike/test_spike.py openwrt-tests/tests/ext/
-          lg_env="${{ matrix.lg_env }}"
+          # Target copy next to the original so its relative imports still resolve.
+          src="openwrt-tests/targets/${{ matrix.lg_env }}"
+          dst="openwrt-tests/targets/ci-${{ matrix.lg_env }}"
+          cp "${src}" "${dst}"
           if [ "${{ matrix.kvm }}" = true ]; then
-            sed 's|extra_args: "|extra_args: "-enable-kvm |' \
-              "openwrt-tests/targets/${lg_env}" > openwrt-tests/targets/kvm-${lg_env}
-            lg_env="kvm-${lg_env}"
+            sed -i 's|extra_args: "|extra_args: "-enable-kvm |' "${dst}"
           fi
-          echo "LG_ENV_FILE=openwrt-tests/targets/${lg_env}" >> "$GITHUB_ENV"
+          sed -i "s|memory: 128M|memory: ${{ matrix.memory }}|" "${dst}"
+          grep -nE 'memory:|extra_args:' "${dst}"
+          echo "LG_ENV_FILE=${dst}" >> "$GITHUB_ENV"
           uv --project openwrt-tests sync
 
       - name: Run spike tests
@@ -122,7 +129,7 @@ jobs:
           total=$(( $(date +%s) - start ))
           {
             echo "### ${{ matrix.name }}"
-            echo "- kvm: ${{ matrix.kvm }}"
+            echo "- kvm: ${{ matrix.kvm }}, memory: ${{ matrix.memory }}"
             echo "- pytest exit: ${rc}, total: ${total} s"
             grep -o '<testcase [^>]*>' results.xml \
               | sed -E 's/.* name="([^"]+)".* time="([^"]+)".*/- \1: \2 s/'
@@ -131,7 +138,7 @@ jobs:
 
       - name: Record resolved dependencies
         if: always()
-        run: uv --project openwrt-tests pip freeze > logs/pip-freeze.txt
+        run: uv pip freeze --python openwrt-tests/.venv > logs/pip-freeze.txt
 
       - uses: actions/upload-artifact@v7.0.2
         if: always()

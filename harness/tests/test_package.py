@@ -18,6 +18,7 @@ Environment variables:
 """
 
 import json
+import os
 import re
 import shlex
 
@@ -154,6 +155,13 @@ def test_services_running(install, vm_ssh, package):
     names = _init_scripts(vm_ssh, package)
     if not names:
         pytest.skip(f"{package} installs no /etc/init.d script, nothing to check")
+
+    if os.environ.get("HARNESS_MUTATION") == "nonprocd":
+        for name in names:
+            vm_ssh.run_check(
+                f"sed -i 's/USE_PROCD=/NOT_PROCD=/' /etc/init.d/{name}",
+                timeout=QUERY_TIMEOUT,
+            )
 
     failures = [
         f"/etc/init.d/{name} is not a procd script (no USE_PROCD=1)"

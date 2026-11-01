@@ -9,6 +9,10 @@ Environment variables:
 
 import os
 
+# Emulated (TCG) targets need minutes for apk and Go binaries; labgrid's
+# run_check default is 30 s.
+CMD_TIMEOUT = 600
+
 
 def test_boot_release(shell_command):
     out = shell_command.run_check("cat /etc/openwrt_release")
@@ -16,11 +20,16 @@ def test_boot_release(shell_command):
 
 
 def test_internet(ssh_command):
-    ssh_command.run_check("apk update")
+    ssh_command.run_check("apk update", timeout=CMD_TIMEOUT)
 
 
 def test_install_local_apk(ssh_command):
     ssh_command.put(os.environ["SPIKE_APK"], "/tmp/spike.apk")
-    ssh_command.run_check("apk add --allow-untrusted /tmp/spike.apk")
-    out = ssh_command.run_check(os.environ["SPIKE_APK_BIN"])
+    # initramfs targets have no persistent overlay, so apk refuses a local file
+    # unless --force-non-repository is given.
+    ssh_command.run_check(
+        "apk add --allow-untrusted --force-non-repository /tmp/spike.apk",
+        timeout=CMD_TIMEOUT,
+    )
+    out = ssh_command.run_check(os.environ["SPIKE_APK_BIN"], timeout=CMD_TIMEOUT)
     assert out[0].strip() == os.environ["SPIKE_APK_VERSION"]

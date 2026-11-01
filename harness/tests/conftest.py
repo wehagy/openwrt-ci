@@ -47,8 +47,9 @@ def ci_network(vm_ssh):
         )
 
     def has_default_route():
-        out, _, _ = vm_ssh.run("ip route show default")
-        return bool(out), out
+        # BusyBox `ip route show default` does not filter, so match here.
+        out, _, _ = vm_ssh.run("ip route")
+        return any(line.startswith("default ") for line in out), out
 
     ok, detail = poll(has_default_route, NETWORK_TIMEOUT)
     assert ok, f"no default route after {NETWORK_TIMEOUT} s: {detail}"

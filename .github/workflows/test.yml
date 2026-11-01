@@ -88,8 +88,6 @@ jobs:
           uv --project openwrt-tests sync
 
       - name: Run tests
-        env:
-          HARNESS_SABOTAGE_DELETE_BINARY: "1"
         run: |
           mkdir -p logs
           start=$(date +%s)

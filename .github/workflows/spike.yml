@@ -66,6 +66,10 @@ jobs:
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          # trigger is asynchronous; wait for udev before checking permissions.
+          sudo udevadm settle
+          ls -l /dev/kvm || echo "no /dev/kvm"
+          grep -cE 'vmx|svm' /proc/cpuinfo || echo "no vmx/svm flag"
           test -w /dev/kvm
 
       - name: Install QEMU

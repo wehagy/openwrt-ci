@@ -32,14 +32,6 @@ jobs:
             qemu_pkg: qemu-system-x86
             path: x86/64
             file: x86-64-generic-squashfs-combined.img.gz
-          - name: x86-64-tcg
-            memory: 128M
-            lg_env: qemu_x86-64.yaml
-            kvm: false
-            arch: x86_64
-            qemu_pkg: qemu-system-x86
-            path: x86/64
-            file: x86-64-generic-squashfs-combined.img.gz
           - name: armsr-armv8
             memory: 256M
             lg_env: qemu_armsr-armv8.yaml
@@ -100,7 +92,7 @@ jobs:
       - name: Prepare openwrt-tests
         run: |
           mkdir -p openwrt-tests/tests/ext
-          cp spike/test_spike.py openwrt-tests/tests/ext/
+          cp spike/test_*.py openwrt-tests/tests/ext/
           # Target copy next to the original so its relative imports still resolve.
           src="openwrt-tests/targets/${{ matrix.lg_env }}"
           dst="openwrt-tests/targets/ci-${{ matrix.lg_env }}"
@@ -125,7 +117,8 @@ jobs:
             openwrt-tests/tests/ext -vv --durations=0 \
             --rootdir=openwrt-tests --confcutdir=openwrt-tests \
             --lg-env "${LG_ENV_FILE}" --firmware "$PWD/firmware.img" \
-            --lg-log=logs --log-cli-level=CONSOLE --junitxml=results.xml || rc=$?
+            --lg-log=logs --log-cli-level=CONSOLE --junitxml=results.xml \
+            -o junit_family=xunit1 || rc=$?
           total=$(( $(date +%s) - start ))
           {
             echo "### ${{ matrix.name }}"

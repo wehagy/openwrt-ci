@@ -31,17 +31,23 @@ jobs:
       run:
         shell: bash # adds pipefail, so `script | tee` keeps the script's status
     env:
-      HARNESS_PACKAGE: ${{ inputs.package }}
       SDK_OUT: ${{ github.workspace }}/sdk-out
       APK_OUT: ${{ github.workspace }}/apk-out
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Resolve line and arch
+      # Validates the inputs; the output is written to $GITHUB_ENV only when
+      # the script succeeded.
+      - name: Resolve line, arch and package
         env:
           LINE: ${{ inputs.line }}
           ARCH: ${{ matrix.arch }}
-        run: scripts/resolve-build.sh "${LINE}" "${ARCH}" | tee -a "${GITHUB_ENV}"
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          resolved=$(scripts/resolve-build.sh "${LINE}" "${ARCH}" "${PACKAGE}")
+          echo "${resolved}" | tee -a "${GITHUB_ENV}"
 
       # A full tree, not just the package: Go packages include
       # ../../lang/golang/golang-package.mk by relative path.
@@ -50,6 +56,7 @@ jobs:
           repository: openwrt/packages
           ref: ${{ env.HARNESS_PACKAGES_BRANCH }}
           path: packages-feed
+          persist-credentials: false
 
       - name: Record feed commit and SDK image digest
         run: |
@@ -71,7 +78,7 @@ jobs:
           ARCH: ${{ env.HARNESS_SDK_ARCH }}
           FEED_DIR: ${{ github.workspace }}/packages-feed
           ARTIFACTS_DIR: ${{ env.SDK_OUT }}
-          PACKAGES: ${{ inputs.package }}
+          PACKAGES: ${{ env.HARNESS_PACKAGE }}
 
       - name: Collect the package
         run: |
@@ -84,6 +91,6 @@ jobs:
 
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: apk-${{ inputs.line }}-${{ matrix.arch }}
+          name: apk-${{ env.HARNESS_PACKAGE }}-${{ inputs.line }}-${{ matrix.arch }}
           path: ${{ env.APK_OUT }}
           if-no-files-found: error

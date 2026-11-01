@@ -16,7 +16,7 @@ on:
       source:
         description: >-
           Where the .apk comes from: feed (official release feed) or artifact
-          (apk-<line>-<arch> uploaded by build.yml in the same workflow run)
+          (apk-<package>-<line>-<arch> uploaded by build.yml in the same workflow run)
         type: string
         required: true
 
@@ -129,7 +129,7 @@ jobs:
       - uses: actions/download-artifact@v8.0.2
         if: inputs.source == 'artifact'
         with:
-          name: apk-${{ inputs.line }}-${{ env.HARNESS_ARCH }}
+          name: apk-${{ inputs.package }}-${{ inputs.line }}-${{ env.HARNESS_ARCH }}
           path: apk-artifact
 
       - name: Fetch package

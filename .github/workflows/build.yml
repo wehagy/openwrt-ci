@@ -26,12 +26,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [x86_64]
+        arch: [x86_64, aarch64_generic, aarch64_cortex-a53, mipsel_24kc, mips_24kc]
     defaults:
       run:
         shell: bash # adds pipefail, so `script | tee` keeps the script's status
     env:
-      HARNESS_CORRUPT_HASH: "1"
       SDK_OUT: ${{ github.workspace }}/sdk-out
       APK_OUT: ${{ github.workspace }}/apk-out
     steps:
@@ -58,13 +57,6 @@ jobs:
           ref: ${{ env.HARNESS_PACKAGES_BRANCH }}
           path: packages-feed
           persist-credentials: false
-
-      - name: Corrupt PKG_HASH of the package (temporary RED mutation)
-        if: env.HARNESS_CORRUPT_HASH == '1'
-        run: |
-          makefile=$(find packages-feed -path "*/${HARNESS_PACKAGE}/Makefile")
-          sed -i -E 's/^PKG_HASH:=.*/PKG_HASH:=0000000000000000000000000000000000000000000000000000000000000000/' "${makefile}"
-          grep -n '^PKG_HASH' "${makefile}"
 
       - name: Record feed commit and SDK image digest
         run: |

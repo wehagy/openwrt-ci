@@ -144,13 +144,20 @@ jobs:
 
       - name: Record resolved dependencies
         if: always()
-        run: uv pip freeze --python openwrt-tests/.venv | tee logs/pip-freeze.txt
+        run: |
+          mkdir -p logs
+          uv pip freeze --python openwrt-tests/.venv | tee logs/pip-freeze.txt
 
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
-          name: qemu-${{ inputs.line }}-${{ matrix.target }}
-          path: |
-            results.xml
-            logs/
-          if-no-files-found: warn
+          name: qemu-${{ inputs.package }}-${{ inputs.line }}-${{ matrix.target }}
+          path: results.xml
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: qemu-${{ inputs.package }}-${{ inputs.line }}-${{ matrix.target }}-logs
+          path: logs/
+          if-no-files-found: error

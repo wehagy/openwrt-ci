@@ -12,7 +12,8 @@ Environment variables:
   HARNESS_PACKAGE          package name
   HARNESS_PACKAGE_VERSION  version as in the feed, e.g. 0.78.1-r1
   HARNESS_LINE             OpenWrt line, e.g. 25.12
-  HARNESS_RELEASE          OpenWrt release of the image, e.g. 25.12.6
+  HARNESS_RELEASE          release or snapshot version of the image, e.g. 25.12.6
+                           or r37969-5799d2da76
   HARNESS_IMAGE_URL        URL of the image
   HARNESS_IMAGE_SHA256     sha256 of the downloaded image file
 """

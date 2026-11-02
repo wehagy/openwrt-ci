@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Responsibility: fetch the .apk of the package under test from its source
-# and print its location and version. Sources: "feed" (the official release
-# feed of the line) and "artifact" (the .apk built by the build workflow and
+# and print its location and version. Sources: "feed" (the apk feed of the
+# line: the release feed, or the snapshot feed for main) and "artifact" (the .apk built by the build workflow and
 # downloaded to a directory).
 # The package name and the version are validated before they are printed,
 # so the output is safe to append to GITHUB_ENV.

@@ -69,25 +69,31 @@ use; an invalid value fails the run):
 |-----------|--------------------------------------------|---------------------------------------|
 | `line`    | OpenWrt line, a key of `harness/lines.yml` | `main` or `NN.NN` (`25.12` and `main` have QEMU data) |
 | `package` | package name to install and check          | `[a-z0-9][a-z0-9._+-]*`, <= 128 chars |
-| `source`  | where the `.apk` comes from                | `feed` (official release feed) or `artifact` (`apk-<package>-<line>-<arch>` from `build.yml` in the same workflow run) |
+| `source`  | where the `.apk` comes from                | `feed` (apk feed of the line: release feed for `25.12`, snapshot feed for `main`) or `artifact` (`apk-<package>-<line>-<arch>` from `build.yml` in the same workflow run) |
 
 - One job per target of `harness/targets.yml` that has an image for the line
   (`x86-64`, `armsr-armv8`, `malta-le`, `malta-be`; all four on both lines).
   Each job downloads the image (line `25.12`: latest stable release; line
   `main`: current snapshot), verifies its sha256 against the `sha256sums` of
-  the same directory, boots it in QEMU, gets the `.apk`
+  the same directory (downloaded first), boots it in QEMU, gets the `.apk`
   (`scripts/fetch-package.sh`) and runs `harness/tests/test_package.py`.
 - Snapshot images are rebuilt daily and each target directory is published on
   its own, so two targets of one run can report different snapshot versions.
   The job summary therefore lists, per job, the release or snapshot version
   (`HARNESS_RELEASE`), the image URL, the image sha256 and the image date
   (`Last-Modified` of the file).
+- For `main`, `scripts/fetch-image.sh` reads `version.buildinfo` before the
+  `sha256sums` and the image and again after them; if it changed, the
+  download is repeated (3 attempts), so the version in the summary is the one
+  of the tested image. A sha256 mismatch with an unchanged version fails.
 - With `source: artifact`, a target uses the artifact of its `arch` in
   `targets.yml` (`x86_64`, `aarch64_generic`, `mipsel_24kc`, `mips_24kc`).
   `aarch64_cortex-a53` is built but not tested yet (no QEMU target).
-- Image formats: `x86-64` is a gzipped combined image; `armsr-armv8` and
-  `malta-*` boot the initramfs kernel (`*-initramfs-kernel.bin`; the release
-  `malta-be` image is `*-vmlinux-initramfs.elf`) from RAM with 256 MB.
+- Image formats (see `harness/targets.yml`): `x86-64` is a gzipped combined
+  image; `armsr-armv8` (both lines) and `malta-le`/`malta-be` on `main` boot
+  `*-initramfs-kernel.bin`; `malta-le`/`malta-be` on `25.12` boot
+  `*-vmlinux-initramfs.elf`; `armsr-armv8` and `malta-*` run from RAM with
+  256 MB.
 - Tests: install, `apk` reports the expected version, and every `/etc/init.d`
   script the package installs is a procd script whose instances all stay
   running with constant pids for 10 s. The service test is skipped only when

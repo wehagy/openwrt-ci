@@ -1,5 +1,6 @@
-# Reusable workflow: boot official OpenWrt images (release or snapshot) in QEMU (aparcar/openwrt-tests)
-# and run the generic package test of harness/tests against one package.
+# Reusable workflow: boot official OpenWrt images (release or snapshot) in
+# QEMU (aparcar/openwrt-tests) and run the generic package test of
+# harness/tests against one package.
 name: test
 
 on:
@@ -15,8 +16,9 @@ on:
         required: true
       source:
         description: >-
-          Where the .apk comes from: feed (official release feed) or artifact
-          (apk-<package>-<line>-<arch> uploaded by build.yml in the same workflow run)
+          Where the .apk comes from: feed (the apk feed of the line: release feed, or
+          snapshot feed for main) or artifact (apk-<package>-<line>-<arch>
+          uploaded by build.yml in the same workflow run)
         type: string
         required: true
 

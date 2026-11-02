@@ -1,6 +1,7 @@
 #!/usr/bin/env sh
 # Responsibility: run inside an official OpenWrt ImageBuilder container: put
-# the built .apk into the ImageBuilder package directory, build one profile
+# the built .apk (when there is a package of our own) into the ImageBuilder
+# package directory, build one profile
 # and copy the build output to the mounted output directory. The unsigned
 # .apk needs no signature override: the ImageBuilder indexes its packages/
 # directory itself and signs that index with its local key.
@@ -18,14 +19,17 @@
 #
 # Environment variables:
 #   HARNESS_PROFILE       ImageBuilder PROFILE (required)
-#   HARNESS_PACKAGES      packages to install, space separated (required)
+#   HARNESS_PACKAGES      packages to install, space separated, `-name` removes
+#                         one (Image Builder syntax); may be empty (required to
+#                         be set)
 #   HARNESS_TARGET_PATH   <target>/<subtarget> (required)
 #   HARNESS_IB_SETUP      true: download the ImageBuilder with ./setup.sh
 #                         first (snapshot tags; scripts/ib-setup.sh retries a
 #                         sha256 mismatch within HARNESS_IB_SETUP_BUDGET);
 #                         false: it is in the image
 #   HARNESS_APK_DIR       directory with the built .apk (default: /harness/in)
-#   HARNESS_PACKAGE       package name, to find its .apk (required)
+#   HARNESS_PACKAGE       package name, to find its .apk; empty: no package of
+#                         our own, nothing to copy (required to be set)
 #   HARNESS_OUT_DIR       writable output directory (default: /harness/out)
 
 set -eu
@@ -36,13 +40,15 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 . "${script_dir}/lib/common.sh"
 
 profile=${HARNESS_PROFILE:?HARNESS_PROFILE is required}
-packages=${HARNESS_PACKAGES:?HARNESS_PACKAGES is required}
+packages=${HARNESS_PACKAGES?HARNESS_PACKAGES is required}
 target_path=${HARNESS_TARGET_PATH:?HARNESS_TARGET_PATH is required}
 setup=${HARNESS_IB_SETUP:?HARNESS_IB_SETUP is required}
-package=${HARNESS_PACKAGE:?HARNESS_PACKAGE is required}
+package=${HARNESS_PACKAGE?HARNESS_PACKAGE is required}
 apk_dir=${HARNESS_APK_DIR:-/harness/in}
 out_dir=${HARNESS_OUT_DIR:-/harness/out}
-check_package_name "${package}"
+if [ -n "${package}" ]; then
+	check_package_name "${package}"
+fi
 
 # ---------------------------------------------------------------------------
 # ImageBuilder download (snapshot tags only).
@@ -65,8 +71,10 @@ printf '%s\n' "${setup_seconds}" >"${out_dir}/setup-seconds"
 # ---------------------------------------------------------------------------
 # Build.
 # ---------------------------------------------------------------------------
-apk_file=$(find_apk "${apk_dir}" "${package}")
-cp "${apk_file}" packages/ || die "cannot copy ${apk_file} to packages/"
+if [ -n "${package}" ]; then
+	apk_file=$(find_apk "${apk_dir}" "${package}")
+	cp "${apk_file}" packages/ || die "cannot copy ${apk_file} to packages/"
+fi
 
 make_log=${out_dir}/make.log
 make_rc=${out_dir}/make.rc

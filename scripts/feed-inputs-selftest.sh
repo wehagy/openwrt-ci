@@ -28,31 +28,6 @@ trap 'rm -rf "${work}"' EXIT
 failures=0
 checks=0
 
-# Run a script, keeping stdout (sc_out) and stderr and checking the exit code.
-#
-# Arguments:
-#   $1  case name
-#   $2  expected exit code (0 or 1)
-#   $3  expected stdout (exactly), or the word ANY to skip the comparison
-#   $4... command and arguments
-script_case() {
-	sc_name=$1
-	sc_rc_expected=$2
-	sc_stdout_expected=$3
-	shift 3
-	sc_rc=0
-	"$@" >"${work}/out" 2>"${work}/err" || sc_rc=$?
-	sc_out=$(cat "${work}/out")
-	sc_err=$(cat "${work}/err")
-	if [ "${sc_rc}" -ne "${sc_rc_expected}" ]; then
-		record "${sc_name}" 1 "exit ${sc_rc}, expected ${sc_rc_expected}: ${sc_err}"
-	elif [ "${sc_stdout_expected}" != ANY ] && [ "${sc_out}" != "${sc_stdout_expected}" ]; then
-		record "${sc_name}" 1 "stdout: ${sc_out}"
-	else
-		record "${sc_name}" 0 ""
-	fi
-}
-
 sha=0123456789abcdef0123456789abcdef01234567
 
 # --- check_feed_repository ------------------------------------------------

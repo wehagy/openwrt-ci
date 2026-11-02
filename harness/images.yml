@@ -1,75 +1,17 @@
-# Responsibility: per-profile data of the image workflow (images.yml).
+# Responsibility: the data of the image workflow (images.yml) that belongs to
+# the base: the files kept as artifacts and the profile its own CI builds. The
+# images a caller wants (profiles, extra packages) are inputs of images.yml
+# and live in the calling repository, not here.
 #
-# Top-level keys:
-#   extra_packages  packages added to every image next to the built package
-#   image_globs     file name globs of the images kept as artifacts (the
-#                   firmware to flash; rootfs/kernel parts are left out)
-#   profiles        one entry per image, keyed by the id used in the job
-#                   name and in the artifact name images-<package>-<line>-<id>
-#
-# Keys of a profile:
-#   target, subtarget  OpenWrt target; the ImageBuilder container is
-#                      docker.io/openwrt/imagebuilder:<target>-<subtarget>-<tag>
-#   profile            ImageBuilder PROFILE
-#   arch               package architecture: the built package comes from the
-#                      artifact apk-<package>-<line>-<arch> of build.yml
-#   expect             optional; only "too-big" is accepted. The image of this
-#                      profile is known not to fit the flash with the package:
-#                      the job is green only when the Image Builder reports
-#                      "too big" (sizes and message in the job summary) and
-#                      fails if the image fits ("now fits": remove the key) or
-#                      anything else goes wrong. Without the key the image must
-#                      fit.
-#
-# The first six profiles and the extra packages are those of
-# wehagy/owpib; the 16 MB flash ones are expected too big. The last two have
-# 32 MB of flash and show whether the package fits a 32 MB device (limits:
-# IMAGE_SIZE of the device in openwrt/openwrt, see README).
-
-extra_packages: luci-app-attendedsysupgrade luci-app-uhttpd luci-ssl owut
+# Keys:
+#   image_globs  file name globs of the images kept as artifacts (the
+#                firmware to flash; rootfs/kernel parts are left out)
+#   profiles     the default of the `profiles` input: used when the caller
+#                gives none, i.e. by the base's own CI. Profile tokens are
+#                <target>/<subtarget>/<profile>, optionally followed by
+#                :too-big for an image known not to fit the flash (the job is
+#                green only when the Image Builder reports "too big").
 
 image_globs: "*sysupgrade* *factory* *combined* *sdcard*"
 
-profiles:
-  x86-64-generic:
-    target: x86
-    subtarget: "64"
-    profile: generic
-    arch: x86_64
-  xiaomi-mi-router-ax3000t-ubootmod:
-    target: mediatek
-    subtarget: filogic
-    profile: xiaomi_mi-router-ax3000t-ubootmod
-    arch: aarch64_cortex-a53
-  acer-predator-w6x-stock:
-    target: mediatek
-    subtarget: filogic
-    profile: acer_predator-w6x-stock
-    arch: aarch64_cortex-a53
-  bananapi-bpi-r3:
-    target: mediatek
-    subtarget: filogic
-    profile: bananapi_bpi-r3
-    arch: aarch64_cortex-a53
-  tplink-archer-c7-v4:
-    target: ath79
-    subtarget: generic
-    profile: tplink_archer-c7-v4
-    arch: mips_24kc
-    expect: too-big
-  totolink-x5000r:
-    target: ramips
-    subtarget: mt7621
-    profile: totolink_x5000r
-    arch: mipsel_24kc
-    expect: too-big
-  glinet-gl-mt1300:
-    target: ramips
-    subtarget: mt7621
-    profile: glinet_gl-mt1300
-    arch: mipsel_24kc
-  buffalo-wzr-hp-g450h:
-    target: ath79
-    subtarget: generic
-    profile: buffalo_wzr-hp-g450h
-    arch: mips_24kc
+profiles: x86/64/generic

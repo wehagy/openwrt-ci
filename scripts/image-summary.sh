@@ -13,7 +13,8 @@
 #   HARNESS_IB_IMAGE, HARNESS_IB_DIGEST, HARNESS_IB_SIZE_BYTES,
 #   HARNESS_IB_PULL_SECONDS, HARNESS_JOB_STATUS (required);
 #   HARNESS_PACKAGE_VERSION, HARNESS_MANIFEST_LINE, HARNESS_MANIFEST_FILE
-#   (set once known), HARNESS_EXPECT (fits or too-big). The outcome and the
+#   (set once known), HARNESS_EXPECT (fits or too-big), HARNESS_IMAGE_PACKAGES
+#   (the `packages` input), HARNESS_TARGET_PATH. The outcome and the
 #   sizes are read from the files scripts/check-image-outcome.sh writes to
 #   <ib-out-dir>.
 
@@ -30,7 +31,7 @@ image_dir=$2
 line=${HARNESS_LINE:?HARNESS_LINE is required}
 profile_id=${HARNESS_PROFILE_ID:?HARNESS_PROFILE_ID is required}
 profile=${HARNESS_PROFILE:?HARNESS_PROFILE is required}
-package=${HARNESS_PACKAGE:?HARNESS_PACKAGE is required}
+package=${HARNESS_PACKAGE?HARNESS_PACKAGE is required}
 ib_image=${HARNESS_IB_IMAGE:?HARNESS_IB_IMAGE is required}
 status=${HARNESS_JOB_STATUS:?HARNESS_JOB_STATUS is required}
 
@@ -72,9 +73,15 @@ printf -- '- ImageBuilder image size: %s bytes, pulled in %s s\n' \
 	"${HARNESS_IB_SIZE_BYTES:-unknown}" "${HARNESS_IB_PULL_SECONDS:-unknown}"
 file_item "ImageBuilder download in the container (setup.sh)" "${ib_dir}/setup-seconds" s
 file_item "make image duration" "${ib_dir}/make-seconds" s
-printf -- '- package: %s %s\n' "${package}" "${HARNESS_PACKAGE_VERSION:-unknown}"
+printf -- '- target: %s\n' "${HARNESS_TARGET_PATH:-unknown}"
+if [ -n "${package}" ]; then
+	printf -- '- package: %s %s\n' "${package}" "${HARNESS_PACKAGE_VERSION:-unknown}"
+else
+	printf -- '- package: none (no package of our own)\n'
+fi
+printf -- '- packages input: %s\n' "${HARNESS_IMAGE_PACKAGES:-(none)}"
 if [ "${expect}" = too-big ]; then
-	printf -- '- expectation: too-big (harness/images.yml): the job passes only if the image does not fit\n'
+	printf -- '- expectation: too-big (the profile was given with :too-big): the job passes only if the image does not fit\n'
 else
 	printf -- '- expectation: fits\n'
 fi
@@ -84,9 +91,12 @@ if [ "${outcome}" = too-big ]; then
 	file_item "actual size" "${ib_dir}/size-actual" bytes
 	file_item "limit" "${ib_dir}/size-limit" bytes
 fi
-if [ -n "${HARNESS_MANIFEST_LINE:-}" ]; then
-	printf -- "- manifest check: \`%s\` is a line of \`%s\`\n" \
-		"${HARNESS_MANIFEST_LINE}" "${HARNESS_MANIFEST_FILE:-the manifest}"
+if [ -n "${HARNESS_MANIFEST_FILE:-}" ]; then
+	printf -- '- manifest check: passed (%s)' "${HARNESS_MANIFEST_FILE}"
+	if [ -n "${HARNESS_MANIFEST_LINE:-}" ]; then
+		printf -- ", \`%s\` is a line" "${HARNESS_MANIFEST_LINE}"
+	fi
+	printf -- ', every package of the packages input is listed (or absent when removed)\n'
 elif [ "${outcome}" = too-big ]; then
 	printf -- '- manifest check: skipped, no image was built\n'
 else

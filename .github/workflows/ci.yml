@@ -1,4 +1,4 @@
-# Tests the harness itself: builds a sample package (netbird) for both lines,
+# Tests the harness itself: builds a sample package (wsdd2) for both lines,
 # tests each build in QEMU and builds its images, on every push to a feature
 # branch. Can also be started by hand to force the SDK images to be rebuilt
 # (refresh_sdk) and to build only one line. Packages of their own live in
@@ -32,9 +32,9 @@ on:
         options: [both, "25.12", main]
         default: both
       package:
-        description: Package to build (default netbird)
+        description: Package to build (default wsdd2)
         type: string
-        default: netbird
+        default: wsdd2
       feed_repository:
         description: Repository of the package tree (default openwrt/packages)
         type: string
@@ -48,6 +48,14 @@ on:
         type: choice
         options: [all, build]
         default: all
+      targets:
+        description: QEMU test targets, ids separated by spaces (default - all of harness/targets.yml)
+        type: string
+        default: ""
+      memory:
+        description: VM memory of the test targets, NNNM from 64M to 1024M (default - harness/targets.yml)
+        type: string
+        default: ""
       profiles:
         description: Image profiles, <target>/<subtarget>/<profile>[:too-big] (default - x86/64/generic of harness/images.yml)
         type: string
@@ -71,11 +79,12 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: "25.12"
-      package: ${{ inputs.package || 'netbird' }}
+      package: ${{ inputs.package || 'wsdd2' }}
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
       feed_repository: ${{ inputs.feed_repository }}
       feed_ref: ${{ inputs.feed_ref }}
       profiles: ${{ inputs.profiles }}
+      targets: ${{ inputs.targets }}
 
   build-main:
     if: ${{ inputs.lines != '25.12' }}
@@ -86,11 +95,12 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: main
-      package: ${{ inputs.package || 'netbird' }}
+      package: ${{ inputs.package || 'wsdd2' }}
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
       feed_repository: ${{ inputs.feed_repository }}
       feed_ref: ${{ inputs.feed_ref }}
       profiles: ${{ inputs.profiles }}
+      targets: ${{ inputs.targets }}
 
   test-25-12:
     if: ${{ inputs.stages != 'build' }}
@@ -99,10 +109,12 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: "25.12"
-      package: ${{ inputs.package || 'netbird' }}
+      package: ${{ inputs.package || 'wsdd2' }}
       source: artifact
       tests_path: harness/sample-tests
       test_secrets: SAMPLE_SECRET
+      targets: ${{ inputs.targets }}
+      memory: ${{ inputs.memory }}
     secrets: inherit
 
   # Snapshot images of line main, with the package built from the main SDK.
@@ -113,10 +125,12 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: main
-      package: ${{ inputs.package || 'netbird' }}
+      package: ${{ inputs.package || 'wsdd2' }}
       source: artifact
       tests_path: harness/sample-tests
       test_secrets: SAMPLE_SECRET
+      targets: ${{ inputs.targets }}
+      memory: ${{ inputs.memory }}
     secrets: inherit
 
   image-25-12:
@@ -126,7 +140,7 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: "25.12"
-      package: ${{ inputs.package || 'netbird' }}
+      package: ${{ inputs.package || 'wsdd2' }}
       profiles: ${{ inputs.profiles }}
       packages: ${{ inputs.packages || '-dnsmasq dnsmasq-full' }}
 
@@ -137,7 +151,7 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: main
-      package: ${{ inputs.package || 'netbird' }}
+      package: ${{ inputs.package || 'wsdd2' }}
       profiles: ${{ inputs.profiles }}
       packages: ${{ inputs.packages || '-dnsmasq dnsmasq-full' }}
 

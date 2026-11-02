@@ -1,4 +1,5 @@
-# TEMPORARY narrowed caller (feed source, no builds); reverted before the final run.
+# Caller: build the package for both lines, then test each build in QEMU on
+# every push to a feature branch.
 name: ci
 
 on:
@@ -9,16 +10,31 @@ permissions:
   contents: read
 
 jobs:
+  build-25-12:
+    uses: ./.github/workflows/build.yml
+    with:
+      line: "25.12"
+      package: netbird
+
+  build-main:
+    uses: ./.github/workflows/build.yml
+    with:
+      line: main
+      package: netbird
+
   test-25-12:
+    needs: build-25-12
     uses: ./.github/workflows/test.yml
     with:
       line: "25.12"
       package: netbird
-      source: feed
+      source: artifact
 
+  # Snapshot images of line main, with the package built from the main SDK.
   test-main:
+    needs: build-main
     uses: ./.github/workflows/test.yml
     with:
       line: main
       package: netbird
-      source: feed
+      source: artifact

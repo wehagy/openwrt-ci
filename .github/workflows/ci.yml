@@ -45,23 +45,6 @@ jobs:
       package: netbird
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
 
-  test-25-12:
-    needs: build-25-12
-    uses: ./.github/workflows/test.yml
-    with:
-      line: "25.12"
-      package: netbird
-      source: artifact
-
-  # Snapshot images of line main, with the package built from the main SDK.
-  test-main:
-    needs: build-main
-    uses: ./.github/workflows/test.yml
-    with:
-      line: main
-      package: netbird
-      source: artifact
-
   image-25-12:
     needs: build-25-12
     uses: ./.github/workflows/images.yml

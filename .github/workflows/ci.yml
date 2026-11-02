@@ -1,4 +1,4 @@
-# TEMPORARY narrowed caller (main line only, artifact source); reverted before the final run.
+# TEMPORARY narrowed caller (feed source, no builds); reverted before the final run.
 name: ci
 
 on:
@@ -9,16 +9,16 @@ permissions:
   contents: read
 
 jobs:
-  build-main:
-    uses: ./.github/workflows/build.yml
+  test-25-12:
+    uses: ./.github/workflows/test.yml
     with:
-      line: main
+      line: "25.12"
       package: netbird
+      source: feed
 
   test-main:
-    needs: build-main
     uses: ./.github/workflows/test.yml
     with:
       line: main
       package: netbird
-      source: artifact
+      source: feed

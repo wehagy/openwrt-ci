@@ -83,6 +83,27 @@ list_versions() {
 		die "cannot list the package versions"
 }
 
+# Delete the package version whose name is a manifest digest; a version that is
+# already gone is not an error. Appends to ${deleted} what it deleted.
+#
+# Arguments:
+#   $1  digest
+delete_version() {
+	dv_id=$(gh api --paginate "/users/${owner}/packages/container/${package}/versions" \
+		--jq ".[] | select(.name == \"$1\") | .id") ||
+		die "cannot look up the version of $1"
+	case "${dv_id}" in
+	'') printf 'sdk-image: version %s is already gone\n' "$1" ;;
+	*[!0-9]*) die "expected one version id for $1" ;;
+	*)
+		gh api -X DELETE "/users/${owner}/packages/container/${package}/versions/${dv_id}" ||
+			die "cannot delete the version ${dv_id}"
+		deleted="${deleted:+${deleted} }${dv_id} ($1)"
+		printf 'sdk-image: deleted version %s (%s)\n' "${dv_id}" "$1"
+		;;
+	esac
+}
+
 # ---------------------------------------------------------------------------
 # Decision: reuse the image or rebuild it.
 # ---------------------------------------------------------------------------
@@ -168,9 +189,9 @@ fi
 # is deleted after the push.
 prev_tag="${tag}-prev"
 prev_dir=$(mktemp -d "${work_dir}/prev.XXXXXX") || die "cannot create a work directory"
-ghcr_inspect "${repo_path}" "${prev_tag}" "${prev_dir}"
+ghcr_manifest "${repo_path}" "${prev_tag}" "${prev_dir}"
 old_prev=
-if [ -f "${prev_dir}/config.json" ]; then
+if [ -f "${prev_dir}/digest" ]; then
 	old_prev=$(ghcr_digest "${prev_dir}")
 fi
 
@@ -209,8 +230,8 @@ printf 'sdk-image: pushed %s created %s\n' "${new_digest}" "${created}"
 
 if [ -n "${old_digest}" ] && [ "${old_digest}" != "${new_digest}" ]; then
 	check_digest "${old_digest}"
-	docker buildx imagetools create -t "${image}-prev" "${container}@${old_digest}" ||
-		die "cannot tag the superseded image as ${prev_tag}"
+	# decide_dir holds the manifest of old_digest, read by the last decide().
+	ghcr_put_manifest "${repo_path}" "${prev_tag}" "${decide_dir}"
 	prev_check=$(mktemp -d "${work_dir}/prevcheck.XXXXXX") || die "cannot create a work directory"
 	ghcr_inspect "${repo_path}" "${prev_tag}" "${prev_check}"
 	[ -f "${prev_check}/config.json" ] || die "${prev_tag} is not on the registry"
@@ -220,25 +241,25 @@ if [ -n "${old_digest}" ] && [ "${old_digest}" != "${new_digest}" ]; then
 fi
 
 deleted=none
-# Only after the superseded image was kept as <tag>-prev.
+# Only after the superseded image was kept as <tag>-prev. The former <tag>-prev
+# normally is an image manifest; an index (left by an earlier version of this
+# script) is deleted together with the images it lists.
 if [ -n "${old_prev}" ] && [ -n "${old_digest}" ] && [ "${old_prev}" != "${old_digest}" ] &&
 	[ "${old_prev}" != "${new_digest}" ]; then
 	check_digest "${old_prev}"
 	list_versions "after the push, before the delete"
-	old_id=$(gh api --paginate "/users/${owner}/packages/container/${package}/versions" \
-		--jq ".[] | select(.name == \"${old_prev}\") | .id") ||
-		die "cannot look up the version of the former ${prev_tag}"
-	case "${old_id}" in
-	'') printf 'sdk-image: version %s is already gone\n' "${old_prev}" ;;
-	*[!0-9]*) die "expected one version id for ${old_prev}" ;;
-	*)
-		gh api -X DELETE "/users/${owner}/packages/container/${package}/versions/${old_id}" ||
-			die "cannot delete the version ${old_id}"
-		deleted="${old_id} (${old_prev})"
-		printf 'sdk-image: deleted the former %s version %s\n' "${prev_tag}" "${deleted}"
-		;;
-	esac
+	prev_children=$(jq -r '.manifests[]?.digest' "${prev_dir}/manifest.json") ||
+		die "cannot read the former ${prev_tag} manifest"
+	deleted=
+	for doomed in "${old_prev}" ${prev_children}; do
+		check_digest "${doomed}"
+		if [ "${doomed}" != "${old_digest}" ] && [ "${doomed}" != "${new_digest}" ]; then
+			delete_version "${doomed}"
+		fi
+	done
+	[ -n "${deleted}" ] || deleted=none
 fi
+
 list_versions "after the delete"
 
 # Tell when another run moved the tag after our push; both images are valid.

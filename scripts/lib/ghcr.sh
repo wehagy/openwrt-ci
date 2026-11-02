@@ -33,11 +33,65 @@ ghcr_write_curl_config() {
 	fi
 }
 
-# Fetch the manifest and the config of <repo>:<tag> into the directory. When
-# the image exists, manifest.json, config.json and digest (the sha256 of the
-# manifest bytes) are written there; when the registry answers 404 nothing
-# but the token files is, so `[ -f <dir>/config.json ]` tells whether the image
+# Write bearer.conf (a curl config with the registry token) into the
+# directory, for an authenticated token when GHCR_USER is set, else anonymous.
+#
+# Arguments:
+#   $1  repository path, e.g. <owner>/openwrt-sdk
+#   $2  actions of the token scope: pull or pull,push
+#   $3  existing work directory
+ghcr_token() {
+	gt_url="https://ghcr.io/token?service=ghcr.io&scope=repository:${1}:${2}"
+	if [ -n "${GHCR_USER:-}" ]; then
+		ghcr_write_curl_config "${3}/auth.conf" ''
+		ghcr_curl -f -K "${3}/auth.conf" -o "${3}/token.json" "${gt_url}" ||
+			die "cannot get an authenticated GHCR token"
+	else
+		ghcr_curl -f -o "${3}/token.json" "${gt_url}" ||
+			die "cannot get an anonymous GHCR token"
+	fi
+	gt_token=$(jq -er .token "${3}/token.json") || die "no token in the GHCR token answer"
+	ghcr_write_curl_config "${3}/bearer.conf" "${gt_token}"
+}
+
+# Fetch the manifest of <repo>:<reference> into the directory, whatever its
+# kind (image manifest or index). When it exists, manifest.json and digest (the
+# sha256 of the manifest bytes) are written there; when the registry answers
+# 404 nothing but the token files is, so `[ -f <dir>/digest ]` tells whether it
 # exists. Any other answer aborts.
+#
+# Arguments:
+#   $1  repository path, e.g. <owner>/openwrt-sdk
+#   $2  tag or digest
+#   $3  existing empty work directory
+ghcr_manifest() {
+	gm_repo=$1
+	gm_ref=$2
+	gm_dir=$3
+	ghcr_token "${gm_repo}" pull "${gm_dir}"
+
+	# Index types are accepted so that an index is answered 200 and rejected
+	# by ghcr_inspect with a clear message, instead of a misleading 404.
+	gm_accept='application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json'
+	gm_code=$(ghcr_curl -K "${gm_dir}/bearer.conf" -H "Accept: ${gm_accept}" \
+		-o "${gm_dir}/manifest.json" -w '%{http_code}' \
+		"https://ghcr.io/v2/${gm_repo}/manifests/${gm_ref}") ||
+		die "cannot reach the GHCR manifest endpoint"
+	# stderr: callers print KEY=value lines on stdout for $GITHUB_ENV.
+	printf 'ghcr: GET manifests/%s -> HTTP %s\n' "${gm_ref}" "${gm_code}" >&2
+	case "${gm_code}" in
+	200) ;;
+	404) return 0 ;;
+	*) die "unexpected HTTP ${gm_code} for the manifest of ${gm_repo}:${gm_ref}" ;;
+	esac
+	gm_sum=$(sha256sum "${gm_dir}/manifest.json") || die "cannot hash the manifest"
+	printf 'sha256:%s\n' "${gm_sum%% *}" >"${gm_dir}/digest"
+}
+
+# Fetch the manifest and the config of a single-platform image <repo>:<ref>
+# into the directory. When the image exists, manifest.json, config.json and
+# digest are written there (see ghcr_manifest); `[ -f <dir>/config.json ]`
+# tells whether it exists. An index aborts.
 #
 # Arguments:
 #   $1  repository path, e.g. <owner>/openwrt-sdk
@@ -45,40 +99,12 @@ ghcr_write_curl_config() {
 #   $3  existing empty work directory
 ghcr_inspect() {
 	gi_repo=$1
-	gi_tag=$2
+	gi_ref=$2
 	gi_dir=$3
-	gi_token_url="https://ghcr.io/token?service=ghcr.io&scope=repository:${gi_repo}:pull"
-
-	if [ -n "${GHCR_USER:-}" ]; then
-		ghcr_write_curl_config "${gi_dir}/auth.conf" ''
-		ghcr_curl -f -K "${gi_dir}/auth.conf" -o "${gi_dir}/token.json" "${gi_token_url}" ||
-			die "cannot get an authenticated GHCR token"
-	else
-		ghcr_curl -f -o "${gi_dir}/token.json" "${gi_token_url}" ||
-			die "cannot get an anonymous GHCR token"
-	fi
-	gi_token=$(jq -er .token "${gi_dir}/token.json") || die "no token in the GHCR token answer"
-	ghcr_write_curl_config "${gi_dir}/bearer.conf" "${gi_token}"
-
-	# Index types are accepted so that an index is answered 200 and rejected
-	# below with a clear message, instead of a misleading 404.
-	gi_accept='application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json'
-	gi_code=$(ghcr_curl -K "${gi_dir}/bearer.conf" -H "Accept: ${gi_accept}" \
-		-o "${gi_dir}/manifest.json" -w '%{http_code}' \
-		"https://ghcr.io/v2/${gi_repo}/manifests/${gi_tag}") ||
-		die "cannot reach the GHCR manifest endpoint"
-	# stderr: callers print KEY=value lines on stdout for $GITHUB_ENV.
-	printf 'ghcr: GET manifests/%s -> HTTP %s\n' "${gi_tag}" "${gi_code}" >&2
-	case "${gi_code}" in
-	200) ;;
-	404) return 0 ;;
-	*) die "unexpected HTTP ${gi_code} for the manifest of ${gi_repo}:${gi_tag}" ;;
-	esac
-
-	gi_sum=$(sha256sum "${gi_dir}/manifest.json") || die "cannot hash the manifest"
-	printf 'sha256:%s\n' "${gi_sum%% *}" >"${gi_dir}/digest"
+	ghcr_manifest "${gi_repo}" "${gi_ref}" "${gi_dir}"
+	[ -f "${gi_dir}/digest" ] || return 0
 	gi_config=$(jq -er .config.digest "${gi_dir}/manifest.json") ||
-		die "${gi_repo}:${gi_tag} is not a single-platform image manifest"
+		die "${gi_repo}:${gi_ref} is not a single-platform image manifest"
 	gi_hex=${gi_config#sha256:}
 	case "${gi_hex}" in
 	*[!0-9a-f]* | '') die "invalid config digest" ;;
@@ -88,6 +114,35 @@ ghcr_inspect() {
 	ghcr_curl -fL -K "${gi_dir}/bearer.conf" -o "${gi_dir}/config.json" \
 		"https://ghcr.io/v2/${gi_repo}/blobs/${gi_config}" ||
 		die "cannot fetch the image config"
+}
+
+# Point <repo>:<tag> at an existing manifest by uploading its exact bytes, so
+# that the digest stays the same (`docker buildx imagetools create` would wrap
+# it in an index). Needs GHCR_USER and GHCR_PASSWORD with write access; the
+# blobs must already be in the repository.
+#
+# Arguments:
+#   $1  repository path, e.g. <owner>/openwrt-sdk
+#   $2  tag to write
+#   $3  directory given to ghcr_manifest for that manifest (the same one)
+ghcr_put_manifest() {
+	gp_repo=$1
+	gp_tag=$2
+	gp_dir=$3
+	[ -n "${GHCR_USER:-}" ] || die "ghcr_put_manifest needs GHCR_USER"
+	[ -f "${gp_dir}/manifest.json" ] || die "no manifest to upload"
+	gp_media=$(jq -er .mediaType "${gp_dir}/manifest.json") || die "the manifest has no mediaType"
+	gp_put=$(mktemp -d "${gp_dir}/put.XXXXXX") || die "cannot create a work directory"
+	ghcr_token "${gp_repo}" pull,push "${gp_put}"
+	gp_code=$(ghcr_curl -X PUT -K "${gp_put}/bearer.conf" -H "Content-Type: ${gp_media}" \
+		--data-binary "@${gp_dir}/manifest.json" -o "${gp_put}/answer.json" -w '%{http_code}' \
+		"https://ghcr.io/v2/${gp_repo}/manifests/${gp_tag}") ||
+		die "cannot reach the GHCR manifest endpoint"
+	printf 'ghcr: PUT manifests/%s -> HTTP %s\n' "${gp_tag}" "${gp_code}" >&2
+	case "${gp_code}" in
+	200 | 201) ;;
+	*) die "unexpected HTTP ${gp_code} writing ${gp_repo}:${gp_tag}" ;;
+	esac
 }
 
 # Print the value of one label of the image last read by ghcr_inspect; empty

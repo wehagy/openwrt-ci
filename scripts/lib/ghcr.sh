@@ -67,7 +67,8 @@ ghcr_inspect() {
 		-o "${gi_dir}/manifest.json" -w '%{http_code}' \
 		"https://ghcr.io/v2/${gi_repo}/manifests/${gi_tag}") ||
 		die "cannot reach the GHCR manifest endpoint"
-	printf 'ghcr: GET manifests/%s -> HTTP %s\n' "${gi_tag}" "${gi_code}"
+	# stderr: callers print KEY=value lines on stdout for $GITHUB_ENV.
+	printf 'ghcr: GET manifests/%s -> HTTP %s\n' "${gi_tag}" "${gi_code}" >&2
 	case "${gi_code}" in
 	200) ;;
 	404) return 0 ;;

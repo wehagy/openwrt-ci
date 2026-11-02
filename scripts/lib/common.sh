@@ -86,7 +86,7 @@ check_release() {
 #   $1  HTTP date
 check_http_date() {
 	case "$1" in
-	*[!A-Za-z0-9,:\ ]* | '') die "invalid HTTP date (allowed: [A-Za-z0-9,: ]+)" ;;
+	*[!A-Za-z0-9,:\ ]* | '') die "missing or invalid HTTP date (allowed: [A-Za-z0-9,: ]+)" ;;
 	*) ;;
 	esac
 }

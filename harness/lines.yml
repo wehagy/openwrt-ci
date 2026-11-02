@@ -21,7 +21,9 @@
 #   snapshot_version_url     (snapshot) version.buildinfo of the target
 #                            directory, e.g. r37969-5799d2da76; snapshot
 #                            images are rebuilt daily, so it identifies the
-#                            image set the run used
+#                            image set the run used. scripts/fetch-image.sh
+#                            reads it around the download (resolve.sh only
+#                            passes the URL on)
 #   image_base_url           directory holding the images and sha256sums
 #   feed_base_url            apk feed (index.json and *.apk)
 #

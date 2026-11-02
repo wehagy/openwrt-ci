@@ -1,7 +1,14 @@
 #!/usr/bin/env sh
 # Responsibility: resolve the data of one (line, target) pair from
-# harness/lines.yml and harness/targets.yml, including the latest stable
-# release of the line, and print it as KEY=value lines.
+# harness/lines.yml and harness/targets.yml and print it as KEY=value lines.
+# The image version depends on the release_source of the line:
+#   releases  the latest release of the line (scanned in the releases index,
+#             or HARNESS_RELEASE) is printed as HARNESS_RELEASE and expanded
+#             in the image and feed URLs.
+#   snapshot  the version is not read here (a snapshot can be republished
+#             before the image download): HARNESS_VERSION_URL is printed and
+#             scripts/fetch-image.sh reads the version next to the download
+#             and prints HARNESS_RELEASE. No URL contains the version.
 #
 # Usage:
 #   scripts/resolve.sh <line> <target> >> "$GITHUB_ENV"
@@ -9,7 +16,8 @@
 # Environment variables:
 #   HARNESS_DIR      directory with lines.yml and targets.yml
 #                    (default: <repo>/harness)
-#   HARNESS_RELEASE  pin the release instead of scanning the releases index
+#   HARNESS_RELEASE  releases lines only: pin the release instead of scanning
+#                    the releases index (ignored on snapshot lines)
 
 set -eu
 
@@ -50,13 +58,14 @@ expand() {
 }
 
 # ---------------------------------------------------------------------------
-# Release: unless pinned, the latest non-rc release of the line ("releases")
-# or the snapshot build version ("snapshot").
+# Release: for "releases", the pinned or the latest non-rc release of the
+# line; for "snapshot", only the URL of its version file (see the header).
 # ---------------------------------------------------------------------------
-if [ -z "${release}" ]; then
-	release_source=$(yq_get "${lines_file}" "${line_key}.release_source")
-	case "${release_source}" in
-	releases)
+version_url=
+release_source=$(yq_get "${lines_file}" "${line_key}.release_source")
+case "${release_source}" in
+releases)
+	if [ -z "${release}" ]; then
 		index_url=$(yq_get "${lines_file}" "${line_key}.releases_index_url")
 		release_regex=$(yq_get "${lines_file}" "${line_key}.release_regex")
 		curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 -o "${work_dir}/index.html" "${index_url}" ||
@@ -66,23 +75,20 @@ if [ -z "${release}" ]; then
 		sed -e 's/^href="//' -e 's|/"$||' "${work_dir}/hrefs" >"${work_dir}/versions"
 		sort -V -o "${work_dir}/sorted" "${work_dir}/versions"
 		release=$(tail -n 1 "${work_dir}/sorted")
-		;;
-	snapshot)
-		version_pattern=$(yq_get "${lines_file}" "${line_key}.snapshot_version_url")
-		version_url=$(expand "${version_pattern}")
-		curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 -o "${work_dir}/version.buildinfo" "${version_url}" ||
-			die "cannot fetch ${version_url}"
-		read -r release <"${work_dir}/version.buildinfo" ||
-			die "cannot read a version from ${version_url}"
-		;;
-	*)
-		die "unsupported release_source in ${lines_file}: ${release_source}"
-		;;
-	esac
-fi
-# The release goes to GITHUB_ENV and into URLs: keep it to a safe charset
-# whatever its origin (pin, index page, remote file).
-check_release "${release}"
+	fi
+	# The release goes to GITHUB_ENV and into URLs: keep it to a safe
+	# charset whatever its origin (pin or index page).
+	check_release "${release}"
+	;;
+snapshot)
+	release=
+	version_pattern=$(yq_get "${lines_file}" "${line_key}.snapshot_version_url")
+	version_url=$(expand "${version_pattern}")
+	;;
+*)
+	die "unsupported release_source in ${lines_file}: ${release_source}"
+	;;
+esac
 
 # ---------------------------------------------------------------------------
 # URLs.
@@ -99,7 +105,8 @@ qemu_pkg=$(yq_get "${targets_file}" "${target_key}.qemu_pkg")
 
 printf 'HARNESS_LINE=%s\n' "${LINE}"
 printf 'HARNESS_TARGET=%s\n' "${TARGET}"
-printf 'HARNESS_RELEASE=%s\n' "${release}"
+[ -z "${release}" ] || printf 'HARNESS_RELEASE=%s\n' "${release}"
+printf 'HARNESS_VERSION_URL=%s\n' "${version_url}"
 printf 'HARNESS_ARCH=%s\n' "${arch}"
 printf 'HARNESS_IMAGE_URL=%s/%s\n' "${image_base}" "${image_file}"
 printf 'HARNESS_SHA256SUMS_URL=%s/sha256sums\n' "${image_base}"

@@ -36,6 +36,7 @@ profiles:
     subtarget: "64"
     profile: generic
     arch: x86_64
+    expect: too-big
   xiaomi-mi-router-ax3000t-ubootmod:
     target: mediatek
     subtarget: filogic

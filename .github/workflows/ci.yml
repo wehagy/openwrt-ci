@@ -10,12 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  build-25-12:
-    uses: ./.github/workflows/build.yml
-    with:
-      line: "25.12"
-      package: netbird
-
   build-main:
     uses: ./.github/workflows/build.yml
     with:
@@ -23,12 +17,11 @@ jobs:
       package: netbird
 
   test-25-12:
-    needs: build-25-12
     uses: ./.github/workflows/test.yml
     with:
       line: "25.12"
       package: netbird
-      source: artifact
+      source: feed
 
   # Snapshot images of line main, with the package built from the main SDK.
   test-main:

@@ -12,6 +12,10 @@ on:
         description: Rebuild the SDK images of the selected lines even when fresh
         type: boolean
         default: false
+      tmp_cleanup:
+        description: TEMPORARY delete the SDK package instead of building
+        type: boolean
+        default: false
       lines:
         description: Lines to build
         type: choice
@@ -24,7 +28,7 @@ permissions:
 jobs:
   # build.yml pushes the SDK images to GHCR, hence packages: write.
   build-25-12:
-    if: ${{ inputs.lines != 'main' }}
+    if: ${{ inputs.lines != 'main' && !inputs.tmp_cleanup }}
     permissions:
       contents: read
       packages: write
@@ -35,7 +39,7 @@ jobs:
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
 
   build-main:
-    if: ${{ inputs.lines != '25.12' }}
+    if: ${{ inputs.lines != '25.12' && !inputs.tmp_cleanup }}
     permissions:
       contents: read
       packages: write
@@ -45,8 +49,33 @@ jobs:
       package: netbird
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
 
+  tmp-cleanup:
+    if: ${{ inputs.tmp_cleanup }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Versions before
+        run: |
+          gh api --paginate "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/openwrt-sdk/versions" \
+            --jq '.[] | [.id, .name, (.metadata.container.tags | join(",")), .created_at] | @tsv'
+      - name: Delete the package
+        run: gh api -X DELETE "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/openwrt-sdk"
+      - name: Package after
+        run: |
+          if gh api "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/openwrt-sdk"; then
+            echo "package still exists"
+            exit 1
+          fi
+          echo "package gone"
+
   test-25-12:
     needs: build-25-12
+    if: ${{ !inputs.tmp_cleanup }}
     uses: ./.github/workflows/test.yml
     with:
       line: "25.12"

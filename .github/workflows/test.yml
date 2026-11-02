@@ -21,6 +21,31 @@ on:
           uploaded by build.yml in the same workflow run)
         type: string
         required: true
+      ci_ref:
+        description: >-
+          Ref (branch, tag or commit) of wehagy/openwrt-ci the scripts, harness data
+          and Dockerfile are checked out from; use the same ref as the `uses:` of
+          this workflow
+        type: string
+        required: false
+        default: main
+      tests_path:
+        description: >-
+          Directory of the calling repository (e.g. packages/netbird/tests) whose
+          *.py files run next to the generic test in the same pytest session;
+          empty or missing: only the generic test runs
+        type: string
+        required: false
+        default: ""
+      test_secrets:
+        description: >-
+          Names of caller secrets (separated by spaces or commas, e.g.
+          NB_SETUP_KEY) exported as environment variables to the tests only.
+          Needs `secrets: inherit` in the caller; a name that is not a secret
+          is exported empty
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -33,6 +58,7 @@ defaults:
     shell: bash
 
 env:
+  HARNESS_CI_REPOSITORY: wehagy/openwrt-ci
   OPENWRT_TESTS_REF: e9a85c56faaa32dd4a4d604623798708a8edcc50
   # Python for the openwrt-tests environment; harness/openwrt-tests.uv.lock
   # was generated with this version from the pyproject.toml at the ref above.
@@ -47,22 +73,36 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      # The harness (scripts/, harness/, docker/) is checked out explicitly: a
+      # reusable workflow runs in the caller's context, so a plain checkout
+      # would fetch the calling repository. Everything runs from ci-base/.
+      - name: Check out the harness
+        uses: actions/checkout@v7.0.1
         with:
+          repository: ${{ env.HARNESS_CI_REPOSITORY }}
+          ref: ${{ inputs.ci_ref }}
+          path: ci-base
           persist-credentials: false
+
+      - name: Report revisions
+        env:
+          HARNESS_CI_REF: ${{ inputs.ci_ref }}
+        run: ci-base/scripts/report-revisions.sh
 
       - name: Validate inputs
         env:
           HARNESS_LINE: ${{ inputs.line }}
           HARNESS_PACKAGE: ${{ inputs.package }}
           HARNESS_SOURCE: ${{ inputs.source }}
-        run: scripts/validate-inputs.sh
+          HARNESS_TESTS_PATH: ${{ inputs.tests_path }}
+          HARNESS_TEST_SECRETS: ${{ inputs.test_secrets }}
+        run: ci-base/scripts/validate-inputs.sh
 
       - name: Build matrix
         id: matrix
         env:
           LINE: ${{ inputs.line }}
-        run: scripts/matrix.sh "${LINE}" | tee -a "${GITHUB_OUTPUT}"
+        run: ci-base/scripts/matrix.sh "${LINE}" | tee -a "${GITHUB_OUTPUT}"
 
       # Fail here, not later in the qemu job's fromJSON, if no matrix was set.
       - name: Check matrix
@@ -82,17 +122,48 @@ jobs:
       matrix:
         target: ${{ fromJSON(needs.targets.outputs.matrix).target }}
     steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-
       # Nothing derived from an input is written to GITHUB_ENV before this.
       - name: Validate inputs
         env:
           HARNESS_LINE: ${{ inputs.line }}
           HARNESS_PACKAGE: ${{ inputs.package }}
           HARNESS_SOURCE: ${{ inputs.source }}
-        run: scripts/validate-inputs.sh
+          HARNESS_TESTS_PATH: ${{ inputs.tests_path }}
+          HARNESS_TEST_SECRETS: ${{ inputs.test_secrets }}
+        run: ci-base/scripts/validate-inputs.sh
+
+      # The harness (scripts/, harness/, docker/) is checked out explicitly: a
+      # reusable workflow runs in the caller's context, so a plain checkout
+      # would fetch the calling repository. Everything runs from ci-base/.
+      - name: Check out the harness
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ env.HARNESS_CI_REPOSITORY }}
+          ref: ${{ inputs.ci_ref }}
+          path: ci-base
+          persist-credentials: false
+
+      - name: Report revisions
+        if: inputs.tests_path == ''
+        env:
+          HARNESS_CI_REF: ${{ inputs.ci_ref }}
+        run: ci-base/scripts/report-revisions.sh
+
+      # Only the tests directory of the calling repository (default repository
+      # and ref: the caller's, github.sha).
+      - name: Check out the caller tests
+        if: inputs.tests_path != ''
+        uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: ${{ inputs.tests_path }}
+          path: caller
+          persist-credentials: false
+
+      - name: Report caller revision
+        if: inputs.tests_path != ''
+        env:
+          HARNESS_CI_REF: ${{ inputs.ci_ref }}
+        run: ci-base/scripts/report-revisions.sh ci-base caller
 
       - uses: actions/checkout@v7.0.1
         with:
@@ -107,7 +178,7 @@ jobs:
         env:
           LINE: ${{ inputs.line }}
           TARGET: ${{ matrix.target }}
-        run: scripts/resolve.sh "${LINE}" "${TARGET}" | tee -a "${GITHUB_ENV}"
+        run: ci-base/scripts/resolve.sh "${LINE}" "${TARGET}" | tee -a "${GITHUB_ENV}"
 
       - name: Enable KVM
         if: env.HARNESS_KVM == 'true'
@@ -126,7 +197,7 @@ jobs:
           sudo apt-get install -y "${HARNESS_QEMU_PKG}"
 
       - name: Fetch image
-        run: scripts/fetch-image.sh | tee -a "${GITHUB_ENV}"
+        run: ci-base/scripts/fetch-image.sh | tee -a "${GITHUB_ENV}"
 
       - uses: actions/download-artifact@v8.0.2
         if: inputs.source == 'artifact'
@@ -139,29 +210,39 @@ jobs:
           HARNESS_SOURCE: ${{ inputs.source }}
           HARNESS_PACKAGE: ${{ inputs.package }}
           HARNESS_ARTIFACT_DIR: apk-artifact
-        run: scripts/fetch-package.sh | tee -a "${GITHUB_ENV}"
+        run: ci-base/scripts/fetch-package.sh | tee -a "${GITHUB_ENV}"
 
       - name: Prepare openwrt-tests
+        env:
+          TESTS_PATH: ${{ inputs.tests_path }}
         run: |
-          mkdir -p openwrt-tests/tests/ext
-          cp harness/tests/*.py openwrt-tests/tests/ext/
-          scripts/prepare-target.sh | tee -a "${GITHUB_ENV}"
+          if [ -n "${TESTS_PATH}" ]; then
+            ci-base/scripts/install-tests.sh openwrt-tests/tests/ext caller "${TESTS_PATH}"
+          else
+            ci-base/scripts/install-tests.sh openwrt-tests/tests/ext
+          fi
+          ci-base/scripts/prepare-target.sh | tee -a "${GITHUB_ENV}"
           # The lock pins every dependency (labgrid is a git branch upstream);
           # --locked fails the job if it no longer matches the pyproject.toml.
-          cp harness/openwrt-tests.uv.lock openwrt-tests/uv.lock
+          cp ci-base/harness/openwrt-tests.uv.lock openwrt-tests/uv.lock
           uv --project openwrt-tests sync --locked
 
+      # The caller secrets named by test_secrets reach only the pytest process
+      # (ci-base/scripts/with-test-secrets.sh), never GITHUB_ENV.
       - name: Run tests
+        env:
+          HARNESS_TEST_SECRETS: ${{ inputs.test_secrets }}
+          HARNESS_SECRETS_JSON: ${{ inputs.test_secrets != '' && toJSON(secrets) || '' }}
         run: |
           mkdir -p logs
           start=$(date +%s)
           rc=0
-          uv --project openwrt-tests run --locked pytest openwrt-tests/tests/ext -vv \
+          ci-base/scripts/with-test-secrets.sh uv --project openwrt-tests run --locked pytest openwrt-tests/tests/ext -vv \
             --durations=0 --rootdir=openwrt-tests --confcutdir=openwrt-tests \
             --lg-env "${HARNESS_LG_ENV_FILE}" --firmware "${HARNESS_FIRMWARE}" \
             --lg-log=logs --log-cli-level=CONSOLE --junitxml=results.xml \
             -o junit_family=xunit1 || rc=$?
-          scripts/summary.sh results.xml "${rc}" "$(( $(date +%s) - start ))" \
+          ci-base/scripts/summary.sh results.xml "${rc}" "$(( $(date +%s) - start ))" \
             >> "${GITHUB_STEP_SUMMARY}"
           exit "${rc}"
 

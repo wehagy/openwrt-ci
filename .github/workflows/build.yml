@@ -8,7 +8,9 @@
 # rebuilds it when it is missing, older than the line's sdk_max_age_days or
 # refresh_sdk is set; otherwise it is reused. The `sdk` job pins the image by
 # digest, so the build never reads an image another run replaces. The caller
-# must grant `packages: write` to the job that calls this workflow.
+# must grant `packages: write` to the job that calls this workflow. A rebuild
+# pushes with the CALLER's GITHUB_TOKEN, so the package needs "Manage Actions
+# access" for the calling repository (README, "SDK image access").
 name: build
 
 on:
@@ -27,15 +29,33 @@ on:
         type: boolean
         required: false
         default: false
+      sdk_container:
+        description: >-
+          GHCR repository of the harness SDK image, ghcr.io/<owner>/<name>
+          (lowercase). Published by sdk-image, read anonymously by sdk.
+        type: string
+        required: false
+        default: ghcr.io/wehagy/openwrt-sdk
+      ci_ref:
+        description: >-
+          Ref (branch, tag or commit) of wehagy/openwrt-ci the scripts, harness data
+          and Dockerfile are checked out from; use the same ref as the `uses:` of
+          this workflow
+        type: string
+        required: false
+        default: main
 
 permissions:
   contents: read
 
-# The one place that names the SDK image repository: published by `sdk-image`,
-# read by `sdk` and passed to openwrt/gh-action-sdk as CONTAINER
-# (scripts/resolve-sdk.sh lowercases it and has no default of its own).
+# The one place that names the SDK image repository (the `sdk_container` input,
+# with its default): published by `sdk-image`, read by `sdk` and passed to
+# openwrt/gh-action-sdk as CONTAINER (scripts/resolve-sdk.sh lowercases and
+# validates it, and has no default of its own). HARNESS_CI_REPOSITORY is the
+# repository the harness is checked out from (first step of every job).
 env:
-  HARNESS_SDK_CONTAINER: ghcr.io/${{ github.repository_owner }}/openwrt-sdk
+  HARNESS_SDK_CONTAINER: ${{ inputs.sdk_container }}
+  HARNESS_CI_REPOSITORY: wehagy/openwrt-ci
 
 jobs:
   # No `concurrency` group: GitHub keeps one running and one pending job per
@@ -64,12 +84,24 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
       HARNESS_REFRESH_SDK: ${{ inputs.refresh_sdk }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      # The harness (scripts/, harness/, docker/) is checked out explicitly: a
+      # reusable workflow runs in the caller's context, so a plain checkout
+      # would fetch the calling repository. Everything runs from ci-base/.
+      - name: Check out the harness
+        uses: actions/checkout@v7.0.1
         with:
+          repository: ${{ env.HARNESS_CI_REPOSITORY }}
+          ref: ${{ inputs.ci_ref }}
+          path: ci-base
           persist-credentials: false
 
+      - name: Report revisions
+        env:
+          HARNESS_CI_REF: ${{ inputs.ci_ref }}
+        run: ci-base/scripts/report-revisions.sh
+
       - name: Age rule self-test
-        run: scripts/sdk-age-selftest.sh
+        run: ci-base/scripts/sdk-age-selftest.sh
 
       # Validates the inputs; the output is written to $GITHUB_ENV only when
       # the script succeeded.
@@ -78,11 +110,11 @@ jobs:
           LINE: ${{ inputs.line }}
           ARCH: ${{ matrix.arch }}
         run: |
-          resolved=$(scripts/resolve-sdk.sh "${LINE}" "${ARCH}")
+          resolved=$(ci-base/scripts/resolve-sdk.sh "${LINE}" "${ARCH}")
           echo "${resolved}" | tee -a "${GITHUB_ENV}"
 
       - name: Reuse or rebuild the SDK image
-        run: scripts/sdk-image-ensure.sh
+        run: ci-base/scripts/sdk-image-ensure.sh
 
   sdk:
     needs: sdk-image
@@ -100,9 +132,21 @@ jobs:
       SDK_OUT: ${{ github.workspace }}/sdk-out
       APK_OUT: ${{ github.workspace }}/apk-out
     steps:
-      - uses: actions/checkout@v7.0.1
+      # The harness (scripts/, harness/, docker/) is checked out explicitly: a
+      # reusable workflow runs in the caller's context, so a plain checkout
+      # would fetch the calling repository. Everything runs from ci-base/.
+      - name: Check out the harness
+        uses: actions/checkout@v7.0.1
         with:
+          repository: ${{ env.HARNESS_CI_REPOSITORY }}
+          ref: ${{ inputs.ci_ref }}
+          path: ci-base
           persist-credentials: false
+
+      - name: Report revisions
+        env:
+          HARNESS_CI_REF: ${{ inputs.ci_ref }}
+        run: ci-base/scripts/report-revisions.sh
 
       # Validates the inputs; the output is written to $GITHUB_ENV only when
       # the script succeeded.
@@ -112,7 +156,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
           PACKAGE: ${{ inputs.package }}
         run: |
-          resolved=$(scripts/resolve-build.sh "${LINE}" "${ARCH}" "${PACKAGE}")
+          resolved=$(ci-base/scripts/resolve-build.sh "${LINE}" "${ARCH}" "${PACKAGE}")
           echo "${resolved}" | tee -a "${GITHUB_ENV}"
 
       # A full tree, not just the package: Go packages include
@@ -129,7 +173,7 @@ jobs:
       # The age is not checked again: sdk-image decided it for this run.
       - name: Pin the SDK image
         run: |
-          info=$(scripts/sdk-image-info.sh)
+          info=$(ci-base/scripts/sdk-image-info.sh)
           echo "${info}" | tee -a "${GITHUB_ENV}"
 
       - name: Record feed commit and build start
@@ -156,10 +200,10 @@ jobs:
         run: |
           now=$(date +%s)
           echo "HARNESS_BUILD_SECONDS=$(( now - HARNESS_BUILD_START ))" >> "${GITHUB_ENV}"
-          scripts/collect-apk.sh "${SDK_OUT}/bin/packages" "${APK_OUT}" | tee -a "${GITHUB_ENV}"
+          ci-base/scripts/collect-apk.sh "${SDK_OUT}/bin/packages" "${APK_OUT}" | tee -a "${GITHUB_ENV}"
 
       - name: Summary
-        run: scripts/build-summary.sh >> "${GITHUB_STEP_SUMMARY}"
+        run: ci-base/scripts/build-summary.sh >> "${GITHUB_STEP_SUMMARY}"
 
       - uses: actions/upload-artifact@v7.0.2
         with:

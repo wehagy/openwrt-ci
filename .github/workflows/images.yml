@@ -16,6 +16,14 @@ on:
           build.yml in the same workflow run are installed in the images
         type: string
         required: true
+      ci_ref:
+        description: >-
+          Ref (branch, tag or commit) of wehagy/openwrt-ci the scripts, harness data
+          and Dockerfile are checked out from; use the same ref as the `uses:` of
+          this workflow
+        type: string
+        required: false
+        default: main
 
 permissions:
   contents: read
@@ -27,6 +35,10 @@ defaults:
   run:
     shell: bash
 
+# The repository the harness is checked out from (first step of every job).
+env:
+  HARNESS_CI_REPOSITORY: wehagy/openwrt-ci
+
 jobs:
   # The profiles come from harness/images.yml, not from this file.
   profiles:
@@ -36,25 +48,37 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      # The harness (scripts/, harness/, docker/) is checked out explicitly: a
+      # reusable workflow runs in the caller's context, so a plain checkout
+      # would fetch the calling repository. Everything runs from ci-base/.
+      - name: Check out the harness
+        uses: actions/checkout@v7.0.1
         with:
+          repository: ${{ env.HARNESS_CI_REPOSITORY }}
+          ref: ${{ inputs.ci_ref }}
+          path: ci-base
           persist-credentials: false
+
+      - name: Report revisions
+        env:
+          HARNESS_CI_REF: ${{ inputs.ci_ref }}
+        run: ci-base/scripts/report-revisions.sh
 
       # Fixed make.log fixtures: a "too big" message that numbers do not
       # prove must fail, so no failure becomes a green expected failure.
       - name: Outcome check self-test
-        run: scripts/image-outcome-selftest.sh
+        run: ci-base/scripts/image-outcome-selftest.sh
 
       - name: Validate inputs
         env:
           HARNESS_LINE: ${{ inputs.line }}
           HARNESS_PACKAGE: ${{ inputs.package }}
           HARNESS_SOURCE: artifact
-        run: scripts/validate-inputs.sh
+        run: ci-base/scripts/validate-inputs.sh
 
       - name: Build matrix
         id: matrix
-        run: scripts/image-matrix.sh | tee -a "${GITHUB_OUTPUT}"
+        run: ci-base/scripts/image-matrix.sh | tee -a "${GITHUB_OUTPUT}"
 
       # Fail here, not later in the image job's fromJSON, if no matrix was set.
       - name: Check matrix
@@ -77,9 +101,21 @@ jobs:
       IMAGE_OUT: ${{ github.workspace }}/image-out
       APK_IN: ${{ github.workspace }}/apk-in
     steps:
-      - uses: actions/checkout@v7.0.1
+      # The harness (scripts/, harness/, docker/) is checked out explicitly: a
+      # reusable workflow runs in the caller's context, so a plain checkout
+      # would fetch the calling repository. Everything runs from ci-base/.
+      - name: Check out the harness
+        uses: actions/checkout@v7.0.1
         with:
+          repository: ${{ env.HARNESS_CI_REPOSITORY }}
+          ref: ${{ inputs.ci_ref }}
+          path: ci-base
           persist-credentials: false
+
+      - name: Report revisions
+        env:
+          HARNESS_CI_REF: ${{ inputs.ci_ref }}
+        run: ci-base/scripts/report-revisions.sh
 
       # Validates the inputs; the output is written to $GITHUB_ENV only when
       # the script succeeded.
@@ -89,7 +125,7 @@ jobs:
           PROFILE_ID: ${{ matrix.profile }}
           PACKAGE: ${{ inputs.package }}
         run: |
-          resolved=$(scripts/resolve-image.sh "${LINE}" "${PROFILE_ID}" "${PACKAGE}")
+          resolved=$(ci-base/scripts/resolve-image.sh "${LINE}" "${PROFILE_ID}" "${PACKAGE}")
           echo "${resolved}" | tee -a "${GITHUB_ENV}"
 
       - uses: actions/download-artifact@v8.0.2
@@ -99,13 +135,13 @@ jobs:
 
       - name: Record the package version
         run: |
-          . scripts/lib/common.sh
+          . ci-base/scripts/lib/common.sh
           apk=$(find_apk "${APK_IN}" "${HARNESS_PACKAGE}")
           version=$(apk_version "${apk}" "${HARNESS_PACKAGE}")
           echo "HARNESS_PACKAGE_VERSION=${version}" | tee -a "${GITHUB_ENV}"
 
       - name: Pull the ImageBuilder image
-        run: scripts/pull-imagebuilder.sh "${HARNESS_IB_IMAGE}" | tee -a "${GITHUB_ENV}"
+        run: ci-base/scripts/pull-imagebuilder.sh "${HARNESS_IB_IMAGE}" | tee -a "${GITHUB_ENV}"
 
       # The container user (uid 1000) is not the runner user, so the output
       # directory is world-writable.
@@ -115,7 +151,7 @@ jobs:
           docker run --rm \
             --env HARNESS_PROFILE --env HARNESS_PACKAGES --env HARNESS_PACKAGE \
             --env HARNESS_TARGET_PATH --env HARNESS_IB_SETUP \
-            --volume "${GITHUB_WORKSPACE}/scripts:/harness/scripts:ro" \
+            --volume "${GITHUB_WORKSPACE}/ci-base/scripts:/harness/scripts:ro" \
             --volume "${APK_IN}:/harness/in:ro" \
             --volume "${IB_OUT}:/harness/out" \
             "${HARNESS_IB_IMAGE}" sh /harness/scripts/imagebuilder-make.sh
@@ -124,19 +160,19 @@ jobs:
       # harness/images.yml): an image that fits, or the Image Builder's "too
       # big" for a profile expected not to fit.
       - name: Check the Image Builder outcome
-        run: scripts/check-image-outcome.sh "${IB_OUT}" | tee -a "${GITHUB_ENV}"
+        run: ci-base/scripts/check-image-outcome.sh "${IB_OUT}" | tee -a "${GITHUB_ENV}"
 
       # An image that does not fit was deleted by the Image Builder: nothing
       # to check or keep (the summary has the sizes and the messages).
       - name: Check the manifest and collect the images
         if: ${{ env.HARNESS_OUTCOME == 'fits' }}
-        run: scripts/collect-images.sh "${IB_OUT}" "${IMAGE_OUT}" | tee -a "${GITHUB_ENV}"
+        run: ci-base/scripts/collect-images.sh "${IB_OUT}" "${IMAGE_OUT}" | tee -a "${GITHUB_ENV}"
 
       - name: Summary
         if: ${{ !cancelled() && env.HARNESS_IB_IMAGE != '' }}
         env:
           HARNESS_JOB_STATUS: ${{ job.status }}
-        run: scripts/image-summary.sh "${IB_OUT}" "${IMAGE_OUT}" | tee -a "${GITHUB_STEP_SUMMARY}"
+        run: ci-base/scripts/image-summary.sh "${IB_OUT}" "${IMAGE_OUT}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ env.HARNESS_OUTCOME == 'fits' }}

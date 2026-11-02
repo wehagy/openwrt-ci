@@ -373,13 +373,19 @@ else
 	record "exit code of the command is passed on" 1 "exit ${wr_rc}"
 fi
 
+# GITHUB_TOKEN is in the JSON (as github_token), so the only thing that can
+# stop the wrapper is its own check of the names, and the error must say so
+# (a name like PATH would "pass" because exporting an empty PATH makes the
+# command itself fail to start).
 rm -f "${work}/ran"
-wrapper_run 'PATH' "${secrets_json}" touch "${work}/ran"
+wrapper_run 'GITHUB_TOKEN' "${secrets_json}" touch "${work}/ran"
 if [ "${wr_rc}" -ne 0 ] && [ ! -e "${work}/ran" ]; then
 	record "reserved name: command not run" 0 ""
 else
 	record "reserved name: command not run" 1 "exit ${wr_rc}"
 fi
+has "reserved name: refused by the name check" "invalid secret name (reserved prefix or name)"
+no_values "reserved name: no secret value is printed"
 
 wrapper_run 'NB_SETUP_KEY' '' touch "${work}/ran"
 if [ "${wr_rc}" -ne 0 ] && [ ! -e "${work}/ran" ]; then

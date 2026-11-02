@@ -4,7 +4,7 @@ Reusable base of an OpenWrt package CI: build a package with the official SDK,
 test it in QEMU and build firmware images with it using the official Image
 Builder. This repository holds only the base (reusable workflows, scripts,
 pinned tooling, the generic package test) and its own CI, which tests the base
-with a sample package (`netbird`). The packages themselves, their
+with a sample package (`wsdd2`). The packages themselves, their
 package-specific tests and the planned upstream pull request automation live in
 [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci-packages),
 which calls the workflows below.
@@ -64,7 +64,7 @@ which calls the workflows below.
   - `test.yml`: reusable QEMU test.
   - `images.yml`: reusable Image Builder build.
   - `ci.yml`: the base's own CI, calls the three workflows above for the sample
-    package `netbird` on push to `feat/**`.
+    package `wsdd2` on push to `feat/**`.
 - `scripts/` also has: `report-revisions.sh` (prints the harness and caller
   commits of a job), `install-tests.sh` (copies the pytest files),
   `with-test-secrets.sh` (exports the caller secrets to the tests only).
@@ -167,6 +167,35 @@ Tests of this logic:
   listed secret is exported (empty here: the base defines none), `GITHUB_TOKEN`
   and the secrets JSON are not in the environment of pytest, and no ancestor
   of pytest has `HARNESS_SECRETS_JSON` in its `/proc/<pid>/environ`.
+
+### Test targets and VM memory (`targets`, `memory`, `test.yml`)
+
+By default every package is tested on the four targets of
+`harness/targets.yml` with 128M of VM memory. A caller whose package needs
+something else says so in its inputs:
+
+| Input     | Meaning                                         | Accepted                                                  |
+|-----------|-------------------------------------------------|-----------------------------------------------------------|
+| `targets` | targets to test, separated by spaces or newlines | 1 to 16 ids of `[a-z0-9][a-z0-9-]*`, each a key of `targets.yml` with an image for the line; empty: all (`x86-64`, `armsr-armv8`, `malta-le`, `malta-be`) |
+| `memory`  | VM memory of every tested target                | `NNNM` from `64M` to `1024M`; empty: the `memory` of `targets.yml` |
+
+- 128M is the default of the `targets/qemu_*.yaml` files of
+  [aparcar/openwrt-tests](https://github.com/aparcar/openwrt-tests) (checked at
+  commit `b3a04b2`: `qemu_x86-64.yaml`, `qemu_armsr-armv8.yaml`,
+  `qemu_malta-le.yaml`, `qemu_malta-be.yaml`), and the value of `memory` in
+  `targets.yml`. A package that needs more passes `memory`: netbird was
+  OOM-killed at 128M on `x86-64` (run 41480369349), so its caller passes `256M`.
+- The `targets` job validates both inputs and builds the matrix
+  (`scripts/matrix.sh`); an unknown id fails there with `unknown test target
+  '<id>' on line <line> (known: ...)` and a memory outside the range with
+  `invalid VM memory (allowed: <megabytes>M from 64M to 1024M)`, before any VM
+  starts. The memory is shown in the summary of the `targets` job and of each
+  VM job (`target: ..., memory: ...`).
+- Pass the same `targets` to `build.yml`: its default `archs` (`@tests
+  @profiles`) take the architectures of the chosen targets, plus those of the
+  image profiles, so a subset builds only what the tests and images need.
+  `scripts/image-inputs-selftest.sh` covers the validators, the selection and
+  the memory override.
 
 ### Secrets for the tests (`test_secrets`, `test.yml`)
 
@@ -341,9 +370,11 @@ rebuilt.
 | Input      | Meaning                                                  | Accepted                                              |
 |------------|----------------------------------------------------------|-------------------------------------------------------|
 | `archs`    | package architectures to build, separated by spaces or newlines | `@tests`, `@profiles`, or a name `[a-z0-9][a-z0-9_-]*` (<= 64 chars); 1 to 16 after expansion; default `@tests @profiles` |
+| `targets`  | QEMU test targets whose architectures `@tests` stands for | same value as the `targets` input of `test.yml`; empty: all |
 | `profiles` | image profiles whose architectures `@profiles` adds       | same value as the `profiles` input of `images.yml` (see there); empty: the default profile of `harness/images.yml` |
 
-- `@tests` is the `arch` of every target of `harness/targets.yml` (`x86_64`,
+- `@tests` is the `arch` of every target of `harness/targets.yml` selected by
+  `targets` (by default all: `x86_64`,
   `aarch64_generic`, `mipsel_24kc`, `mips_24kc`), so the architectures the QEMU
   jobs need are never listed twice. `@profiles` is the `arch_packages` of the
   `profiles.json` of each profile (see "Reusable workflow `images.yml`").
@@ -407,7 +438,8 @@ a test repository, an upstream pull request) passes:
 
 Inputs (`line`, `package`, `source` required; all validated by
 `scripts/validate-inputs.sh` before use; an invalid value fails the run).
-Optional: `tests_path`, `test_secrets` and `ci_ref` (see above).
+Optional: `tests_path`, `test_secrets`, `targets`, `memory` and `ci_ref` (see
+above and "Test targets and VM memory").
 
 | Input     | Meaning                                    | Accepted                              |
 |-----------|--------------------------------------------|---------------------------------------|
@@ -436,8 +468,8 @@ Optional: `tests_path`, `test_secrets` and `ci_ref` (see above).
 - Image formats (see `harness/targets.yml`): `x86-64` is a gzipped combined
   image; `armsr-armv8` (both lines) and `malta-le`/`malta-be` on `main` boot
   `*-initramfs-kernel.bin`; `malta-le`/`malta-be` on `25.12` boot
-  `*-vmlinux-initramfs.elf`; `armsr-armv8` and `malta-*` run from RAM with
-  256 MB.
+  `*-vmlinux-initramfs.elf`; `armsr-armv8` and `malta-*` run from RAM (with the
+  default 128M, see "Test targets and VM memory").
 - Network of the VM (`harness/tests/conftest.py`): the session waits for a
   default route and an A record, then runs `apk update`, repeated up to 5 times, 5 s
   apart, only when stderr has `Failed to send request: Operation not
@@ -457,8 +489,8 @@ Optional: `tests_path`, `test_secrets` and `ci_ref` (see above).
   `test_package.py` (`apk info -L`, `apk info -e`, `apk list -I`) at 120 s,
   because `apk info -L` right after the install took 0.5 to 15 s in healthy
   runs and once more than 30 s (`TimeoutExpired`, run 41437522326, job
-  125258840649, `x86-64` on `main`, then 128 MB). `x86-64` has 256 MB like the
-  other targets; that memory pressure is the cause is not proven.
+  125258840649, `x86-64` on `main`, with netbird at 128 MB); that memory
+  pressure is the cause is not proven.
 - `harness/selftests/` (step "Harness helpers self-test" of `test.yml`) tests
   the retry helpers with a stub in place of the VM.
 - Tests: install, `apk` reports the expected version, and every `/etc/init.d`
@@ -598,12 +630,12 @@ the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci
 
 ## Own CI `ci.yml`
 
-Tests the base with the sample package `netbird`. Every call passes
+Tests the base with the sample package `wsdd2`. Every call passes
 `ci_ref: ${{ github.sha }}`, the commit under test. On push to `feat/**` and on
 `workflow_dispatch`.
 Dispatch inputs: `refresh_sdk` (boolean, passed to `build.yml`) and `lines`
 (`both`, `25.12` or `main`: the other build job is skipped); `package`
-(default `netbird`), `feed_repository` and `feed_ref` (passed to `build.yml`,
+(default `wsdd2`), `feed_repository` and `feed_ref` (passed to `build.yml`,
 see "Feed source"); `stages` (`all`, or `build` to skip the test and image
 jobs); `profiles` and `packages` (the `profiles` and `packages` inputs; empty
 profiles: `x86/64/generic` of `harness/images.yml`; empty packages: the CI uses

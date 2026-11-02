@@ -145,7 +145,7 @@ jobs:
         id: record
         run: |
           ci-base/scripts/feed-record.sh packages-feed | tee -a "${GITHUB_OUTPUT}"
-          ci-base/scripts/feed-record.sh --summary packages-feed >> "${GITHUB_STEP_SUMMARY}"
+          ci-base/scripts/feed-record.sh --summary packages-feed | tee -a "${GITHUB_STEP_SUMMARY}"
 
   # No `concurrency` group: GitHub keeps one running and one pending job per
   # group and cancels the older pending one, which would cancel the build of a
@@ -299,7 +299,7 @@ jobs:
           ci-base/scripts/collect-apk.sh "${SDK_OUT}/bin/packages" "${APK_OUT}" | tee -a "${GITHUB_ENV}"
 
       - name: Summary
-        run: ci-base/scripts/build-summary.sh >> "${GITHUB_STEP_SUMMARY}"
+        run: ci-base/scripts/build-summary.sh | tee -a "${GITHUB_STEP_SUMMARY}"
 
       - uses: actions/upload-artifact@v7.0.2
         with:

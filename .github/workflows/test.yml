@@ -31,10 +31,10 @@ defaults:
     shell: bash
 
 env:
-  OPENWRT_TESTS_REF: b3a04b2e08f3ea38e5aa931d4cbe87b30ac8e105
+  OPENWRT_TESTS_REF: e9a85c56faaa32dd4a4d604623798708a8edcc50
   # Python for the openwrt-tests environment; harness/openwrt-tests.uv.lock
   # was generated with this version from the pyproject.toml at the ref above.
-  UV_PYTHON: "3.13"
+  UV_PYTHON: "3.15"
 
 jobs:
   # The QEMU targets come from harness/targets.yml, not from this file.

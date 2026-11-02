@@ -123,8 +123,8 @@ Only what the code supports today:
 
 The `openwrt-tests` checkout is pinned to `OPENWRT_TESTS_REF` in `test.yml`.
 Its Python environment is pinned by `harness/openwrt-tests.uv.lock` (Python
-3.13, labgrid at a fixed commit) and installed with `uv sync --locked`, so the
+3.15, labgrid at a fixed commit) and installed with `uv sync --locked`, so the
 job fails if the lock no longer matches that `pyproject.toml`. To regenerate
 after changing the ref, copy the `pyproject.toml` of the new ref to an empty
-directory, run `uv lock --python 3.13` there and copy `uv.lock` to
+directory, run `uv lock --python 3.15` there and copy `uv.lock` to
 `harness/openwrt-tests.uv.lock`.

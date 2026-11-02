@@ -63,3 +63,13 @@ profiles:
     profile: totolink_x5000r
     arch: mipsel_24kc
     expect: too-big
+  glinet-gl-mt1300:
+    target: ramips
+    subtarget: mt7621
+    profile: glinet_gl-mt1300
+    arch: mipsel_24kc
+  buffalo-wzr-hp-g450h:
+    target: ath79
+    subtarget: generic
+    profile: buffalo_wzr-hp-g450h
+    arch: mips_24kc

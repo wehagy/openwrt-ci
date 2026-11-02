@@ -40,7 +40,7 @@ jobs:
   # The QEMU targets come from harness/targets.yml, not from this file.
   targets:
     name: targets ${{ inputs.line }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -73,7 +73,7 @@ jobs:
   qemu:
     needs: targets
     name: ${{ inputs.line }} ${{ matrix.target }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     strategy:
       fail-fast: false

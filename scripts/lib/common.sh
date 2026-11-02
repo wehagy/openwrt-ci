@@ -119,3 +119,55 @@ apk_version() {
 	check_apk_version "${apk_ver}"
 	printf '%s\n' "${apk_ver}"
 }
+
+# Abort unless the argument is a GHCR image repository of the form
+# ghcr.io/<owner>/<name> (lowercase). The value is never echoed (see
+# check_package_name).
+#
+# Arguments:
+#   $1  repository
+check_sdk_container() {
+	case "$1" in
+	ghcr.io/*/*/* | ghcr.io//* | ghcr.io/*/ | *[!a-z0-9./_-]* | '') die "invalid SDK container (allowed: ghcr.io/<owner>/<name>)" ;;
+	ghcr.io/*/*) ;;
+	*) die "invalid SDK container (allowed: ghcr.io/<owner>/<name>)" ;;
+	esac
+}
+
+# Abort unless the argument is an SDK image tag: <arch>-<suffix>. The value
+# is never echoed (see check_package_name).
+#
+# Arguments:
+#   $1  tag
+check_sdk_tag() {
+	case "$1" in
+	*[!A-Za-z0-9._-]* | [!A-Za-z0-9]* | '') die "invalid SDK image tag (allowed: [A-Za-z0-9][A-Za-z0-9._-]*)" ;;
+	*) ;;
+	esac
+	[ "${#1}" -le 128 ] || die "invalid SDK image tag (longer than 128 chars)"
+}
+
+# Abort unless the argument is a maximum image age in whole days, 1 to 365.
+# The value is never echoed (see check_package_name).
+#
+# Arguments:
+#   $1  days
+check_max_age_days() {
+	case "$1" in
+	*[!0-9]* | '') die "invalid SDK max age (allowed: whole days, 1-365)" ;;
+	*) ;;
+	esac
+	{ [ "${#1}" -le 3 ] && [ "$1" -ge 1 ] && [ "$1" -le 365 ]; } ||
+		die "invalid SDK max age (allowed: whole days, 1-365)"
+}
+
+# Abort unless the argument is true or false. The value is never echoed.
+#
+# Arguments:
+#   $1  value
+check_bool() {
+	case "$1" in
+	true | false) ;;
+	*) die "invalid boolean (allowed: true or false)" ;;
+	esac
+}

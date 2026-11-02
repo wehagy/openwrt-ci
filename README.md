@@ -1,7 +1,8 @@
 # openwrt-ci
 
-Generic OpenWrt package CI: build a package with the official SDK and test it
-in QEMU. Image builds and upstream pull requests are planned.
+Generic OpenWrt package CI: build a package with the official SDK, test it in
+QEMU and build firmware images with it using the official Image Builder.
+Upstream pull requests are planned.
 
 ## Status
 
@@ -9,9 +10,10 @@ in QEMU. Image builds and upstream pull requests are planned.
 |-----------------------------------------------------------------------------------|-----------------------------------------------------|
 | SDK build (`build.yml`) on lines `25.12` and `main`, 5 architectures              | NetBird runtime tests                               |
 | Own SDK image on GHCR, rebuilt when older than 1 day or on request                | Scheduled SDK image refresh (none today: lazy only) |
-| QEMU test (`test.yml`) on lines `25.12` and `main`, sources `feed` and `artifact` | Image build                                         |
-| QEMU targets `x86-64`, `armsr-armv8`, `malta-le`, `malta-be` on both lines        | Upstream PR automation and upstream PR testing      |
-| `ci.yml`: build both lines, then test each build                                  |                                                     |
+| QEMU test (`test.yml`) on lines `25.12` and `main`, sources `feed` and `artifact` | Upstream PR automation and upstream PR testing      |
+| QEMU targets `x86-64`, `armsr-armv8`, `malta-le`, `malta-be` on both lines        |                                                     |
+| Image build (`images.yml`) on lines `25.12` and `main`, 6 profiles                |                                                     |
+| `ci.yml`: build both lines, then test each build and build its images             |                                                     |
 
 ## Layout
 
@@ -22,6 +24,8 @@ in QEMU. Image builds and upstream pull requests are planned.
     directory, e.g. `r37969-5799d2da76`). Both lines also have the build
     keys (`sdk_tag_suffix`, `sdk_max_age_days`, `packages_branch`,
     `imagebuilder_tag_suffix`).
+  - `images.yml`: image profiles (target, subtarget, profile, package
+    architecture), extra packages and the globs of the files kept as artifacts.
   - `targets.yml`: per-QEMU-target data (`x86-64`, `armsr-armv8`, `malta-le`,
     `malta-be`) and the image name per line.
   - `tests/`: pytest tests run inside the VMs through
@@ -33,6 +37,9 @@ in QEMU. Image builds and upstream pull requests are planned.
   - Build: `resolve-build.sh`, `collect-apk.sh`, `build-summary.sh`.
   - Test: `validate-inputs.sh`, `matrix.sh`, `resolve.sh`, `fetch-image.sh`,
     `fetch-package.sh`, `prepare-target.sh`, `summary.sh`.
+  - Images: `image-matrix.sh`, `resolve-image.sh`, `pull-imagebuilder.sh`,
+    `imagebuilder-make.sh` (runs inside the Image Builder container),
+    `collect-images.sh`, `image-summary.sh`.
   - `lib/common.sh`: shared helpers. `lib/ghcr.sh` (registry reads),
     `lib/sdk-age.sh` (age rule and reuse/rebuild decision),
     `lib/sdk-labels.sh` (image label keys).
@@ -40,6 +47,7 @@ in QEMU. Image builds and upstream pull requests are planned.
 - `.github/workflows/`
   - `build.yml`: reusable SDK build.
   - `test.yml`: reusable QEMU test.
+  - `images.yml`: reusable Image Builder build.
   - `ci.yml`: caller, runs on push to `feat/**`.
 
 ## Reusable workflow `build.yml`
@@ -175,6 +183,53 @@ use; an invalid value fails the run):
   the package installs no init script. The job summary lists passed, failed
   and skipped per test.
 
+## Reusable workflow `images.yml`
+
+Inputs (both required, validated before use, like `build.yml`): `line` (a key
+of `harness/lines.yml`) and `package`.
+
+- One job per profile of `harness/images.yml` (`fail-fast: false`), from the
+  profiles and extra packages of
+  [wehagy/owpib](https://github.com/wehagy/owpib); extra packages
+  `luci-app-attendedsysupgrade luci-app-uhttpd luci-ssl owut` plus the built
+  package:
+
+  | Profile id                          | Target / subtarget | Profile                             | Package arch         |
+  |-------------------------------------|--------------------|-------------------------------------|----------------------|
+  | `x86-64-generic`                    | `x86/64`           | `generic`                           | `x86_64`             |
+  | `xiaomi-mi-router-ax3000t-ubootmod` | `mediatek/filogic` | `xiaomi_mi-router-ax3000t-ubootmod` | `aarch64_cortex-a53` |
+  | `acer-predator-w6x-stock`           | `mediatek/filogic` | `acer_predator-w6x-stock`           | `aarch64_cortex-a53` |
+  | `bananapi-bpi-r3`                   | `mediatek/filogic` | `bananapi_bpi-r3`                   | `aarch64_cortex-a53` |
+  | `tplink-archer-c7-v4`               | `ath79/generic`    | `tplink_archer-c7-v4`               | `mips_24kc`          |
+  | `totolink-x5000r`                   | `ramips/mt7621`    | `totolink_x5000r`                   | `mipsel_24kc`        |
+
+- Image Builder: `docker.io/openwrt/imagebuilder:<target>-<subtarget>-<tag>`
+  (`scripts/resolve-image.sh`).
+  - `25.12` (`release_source: releases`): `<tag>` is the latest `25.12.x`
+    release, found as `test.yml` finds its release (`latest_release` in
+    `scripts/lib/common.sh`). The release image contains the Image Builder.
+  - `main` (`release_source: snapshot`): `<tag>` is `main`, a snapshot tag
+    that ships only `setup.sh`; the container downloads the Image Builder from
+    `downloads.openwrt.org` when it starts (timed as "setup.sh" in the
+    summary). Risk: that mirror gave ~330 KB/s from runners for the SDK.
+- The `.apk` of `apk-<package>-<line>-<arch>` is copied to the Image Builder
+  `packages/` directory. It is unsigned and needs no signature override: the
+  Image Builder (`CONFIG_SIGNATURE_CHECK=y`) indexes `packages/` itself with
+  `apk mkndx --allow-untrusted` and signs that index with its local key.
+- `scripts/collect-images.sh` requires the line `<package> - <version>` in
+  `*.manifest` (version of the built `.apk`), then keeps the files matching
+  `image_globs` plus the manifest and `sha256sums`.
+- An image that does not fit the flash: the Image Builder only prints
+  `WARNING: Image file ... is too big: <size> > <limit>` and deletes the image
+  (`Build/check-size`), so `scripts/imagebuilder-make.sh` fails the job on that
+  message. No profile is excluded: a profile that cannot hold the package shows
+  as a failed job with the message quoted in its summary.
+- The job summary (`scripts/image-summary.sh`) lists profile, Image Builder
+  image and digest, size and pull time, `setup.sh` and `make image` durations,
+  the manifest check, every artifact file with size and sha256 and, on
+  failure, the Image Builder messages of `make.log`.
+- Artifact: `images-<package>-<line>-<profile id>`.
+
 ## Caller `ci.yml`
 
 On push to `feat/**` and on `workflow_dispatch`, for package `netbird`.
@@ -188,12 +243,15 @@ has `packages: write`.
 | `build-main`  | `build.yml` | `line: main`                      |               |
 | `test-25-12`  | `test.yml`  | `line: 25.12`, `source: artifact` | `build-25-12` |
 | `test-main`   | `test.yml`  | `line: main`, `source: artifact`  | `build-main`  |
+| `image-25-12` | `images.yml` | `line: 25.12`                    | `build-25-12` |
+| `image-main`  | `images.yml` | `line: main`                     | `build-main`  |
 
 ## Artifacts
 
 | Name                                  | From        | Content                        |
 |---------------------------------------|-------------|--------------------------------|
 | `apk-<package>-<line>-<arch>`         | `build.yml` | the built `.apk`               |
+| `images-<package>-<line>-<profile>`   | `images.yml` | sysupgrade/factory/combined/sdcard images, `*.manifest`, `sha256sums` |
 | `qemu-<package>-<line>-<target>`      | `test.yml`  | `results.xml` (junit)          |
 | `qemu-<package>-<line>-<target>-logs` | `test.yml`  | labgrid logs, `pip-freeze.txt` |
 
@@ -209,6 +267,8 @@ Only what the code supports today:
   `test.yml` with `source: feed`.
 - `harness/tests/test_package.py` is generic: no per-package code or data.
   Package-specific runtime tests do not exist yet.
+- Build images with the package: call `images.yml` with the same `line` and
+  `package`, `needs:` the build job.
 - Packages outside `openwrt/packages` (local feeds, upstream PRs) are not
   supported yet.
 

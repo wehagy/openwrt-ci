@@ -228,7 +228,12 @@ jobs:
           ref: ${{ env.OPENWRT_TESTS_REF }}
           path: openwrt-tests
 
+      # No Actions cache: this job runs with the caller secrets, and an entry
+      # saved by a run that built untrusted feed code must never be restored
+      # here (see README, Trust model).
       - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: false
 
       - name: Resolve line and target
         env:

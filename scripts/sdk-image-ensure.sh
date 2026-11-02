@@ -2,8 +2,12 @@
 # Responsibility: make sure the harness SDK image of one (line, arch) on GHCR
 # exists and is younger than the line's maximum age. A missing, too old or
 # force-refreshed image is rebuilt from the official snapshot SDK container
-# (docker/sdk-image/Dockerfile runs setup.sh once), pushed, and the version it
-# supersedes is deleted. A fresh image is reused untouched.
+# (docker/sdk-image/Dockerfile runs setup.sh once) and pushed. The image it
+# supersedes stays as <tag>-prev, so builds that pinned it by digest keep
+# working; the version that was <tag>-prev is deleted. A fresh image is reused
+# untouched. There is no lock: the decision (lib/sdk-age.sh, sdk_decide) is
+# made again after the local build and just before the push, so a run that
+# finds another run's fresh image discards its build instead of pushing.
 #
 # Usage:
 #   scripts/sdk-image-ensure.sh
@@ -11,7 +15,8 @@
 # Environment variables (set by scripts/resolve-sdk.sh and the workflow):
 #   HARNESS_SDK_CONTAINER, HARNESS_SDK_ARCH, HARNESS_SDK_IMAGE,
 #   HARNESS_SDK_BASE_IMAGE, HARNESS_SDK_MAX_AGE_DAYS
-#   HARNESS_REFRESH_SDK  true to rebuild even a fresh image (default: false)
+#   HARNESS_REFRESH_SDK  true to rebuild an image created before this script
+#                        started, even a fresh one (default: false)
 #   GITHUB_TOKEN         token with packages: write
 #   GITHUB_ACTOR, GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT
 #   GH_TOKEN             same token, for the gh CLI (package versions API)
@@ -81,40 +86,53 @@ list_versions() {
 # ---------------------------------------------------------------------------
 # Decision: reuse the image or rebuild it.
 # ---------------------------------------------------------------------------
-now=$(date +%s)
-old_digest=
-age_s=none
-ghcr_inspect "${repo_path}" "${tag}" "${work_dir}"
-if [ -f "${work_dir}/config.json" ]; then
-	old_digest=$(ghcr_digest "${work_dir}")
-	old_created=$(ghcr_label "${work_dir}" "${label_created}")
-	old_epoch=$(utc_to_epoch "${old_created}")
-	age_s=$((now - old_epoch))
-	freshness=$(sdk_freshness "${old_epoch}" "${now}" "${max_days}")
-	if [ "${refresh}" = true ]; then
-		decision=rebuild
-		reason="refresh_sdk requested (age ${age_s} s)"
-	elif [ "${freshness}" = fresh ]; then
-		decision=reuse
-		reason="age ${age_s} s <= ${max_days} day(s)"
-	else
-		decision=rebuild
-		reason="age ${age_s} s > ${max_days} day(s)"
-	fi
-else
-	decision=rebuild
-	reason="image missing"
+# An image created before this point is stale for a requested refresh; one a
+# concurrent run pushed after it satisfies the request.
+refresh_since=
+if [ "${refresh}" = true ]; then
+	refresh_since=$(date +%s)
 fi
+
+# Read the image of the tag and decide with sdk_decide. Sets old_digest and
+# old_created (empty when the image is missing), decision and reason.
+decide() {
+	decide_dir=$(mktemp -d "${work_dir}/decide.XXXXXX") || die "cannot create a work directory"
+	decide_now=$(date +%s)
+	ghcr_inspect "${repo_path}" "${tag}" "${decide_dir}"
+	old_digest=
+	old_created=
+	decide_exists=false
+	if [ -f "${decide_dir}/config.json" ]; then
+		decide_exists=true
+		old_digest=$(ghcr_digest "${decide_dir}")
+		old_created=$(ghcr_label "${decide_dir}" "${label_created}")
+	fi
+	decide_out=$(sdk_decide "${decide_exists}" "${old_created}" "${decide_now}" "${max_days}" "${refresh_since}")
+	decision=${decide_out%% *}
+	reason=${decide_out#* }
+}
+
+# Append the decision to the job summary.
+#
+# Arguments:
+#   $1  digest of the image the job leaves on the tag
+#   $2  its creation time
+#   $3  extra summary line; empty for none
+write_summary() {
+	[ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
+	{
+		printf '### sdk image %s\n' "${tag}"
+		printf -- '- decision: %s (%s)\n' "${decision}" "${reason}"
+		printf -- '- digest: %s, created %s\n' "$1" "$2"
+		[ -z "$3" ] || printf -- '- %s\n' "$3"
+	} >>"${GITHUB_STEP_SUMMARY}"
+}
+
+decide
 printf 'sdk-image: image=%s decision=%s reason="%s"\n' "${image}" "${decision}" "${reason}"
 if [ "${decision}" = reuse ]; then
 	printf 'sdk-image: reused %s created %s\n' "${old_digest}" "${old_created}"
-	if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-		{
-			printf '### sdk image %s\n' "${tag}"
-			printf -- '- decision: reuse (%s)\n' "${reason}"
-			printf -- '- digest: %s, created %s\n' "${old_digest}" "${old_created}"
-		} >>"${GITHUB_STEP_SUMMARY}"
-	fi
+	write_summary "${old_digest}" "${old_created}" ""
 	exit 0
 fi
 
@@ -135,11 +153,34 @@ archive_sha=${archive_line%% *}
 archive_name=${archive_line#"${archive_sha} *"}
 check_sdk_archive "${archive_sha}" "${archive_name}"
 
+# The build took minutes: another run may have pushed a fresh image meanwhile.
+decide
+printf 'sdk-image: image=%s re-check before the push decision=%s reason="%s"\n' \
+	"${image}" "${decision}" "${reason}"
+if [ "${decision}" = reuse ]; then
+	printf 'sdk-image: another run pushed %s created %s; discarding the local build\n' \
+		"${old_digest}" "${old_created}"
+	write_summary "${old_digest}" "${old_created}" "local build discarded"
+	exit 0
+fi
+
+# What the tag held before the push becomes <tag>-prev; what <tag>-prev held
+# is deleted after the push.
+prev_tag="${tag}-prev"
+prev_dir=$(mktemp -d "${work_dir}/prev.XXXXXX") || die "cannot create a work directory"
+ghcr_inspect "${repo_path}" "${prev_tag}" "${prev_dir}"
+old_prev=
+if [ -f "${prev_dir}/config.json" ]; then
+	old_prev=$(ghcr_digest "${prev_dir}")
+fi
+
 # A config-only layer: FROM the stage, plus the labels read by the build job.
 # Provenance and SBOM are off: with them the push is an image index plus
 # attestation manifests, which the registry lists as extra package versions
 # and which ghcr_inspect rejects. --push writes one plain image manifest.
+push_meta="${work_dir}/push.json"
 docker buildx build --pull=false --provenance=false --sbom=false --push -t "${image}" \
+	--metadata-file "${push_meta}" \
 	--label "${label_created}=${created}" \
 	--label "org.opencontainers.image.source=https://github.com/${repository}" \
 	--label "org.opencontainers.image.base.name=${base_image}" \
@@ -151,46 +192,61 @@ FROM ${stage}
 EOF
 
 # ---------------------------------------------------------------------------
-# Verify the push and delete the version it superseded.
+# Verify the push, keep the superseded image as <tag>-prev, delete the one
+# before it.
 # ---------------------------------------------------------------------------
-verify_dir=$(mktemp -d "${work_dir}/verify.XXXXXX")
-ghcr_inspect "${repo_path}" "${tag}" "${verify_dir}"
+# Read back by digest, not by tag: another run may move the tag at any time.
+new_digest=$(jq -er '."containerimage.digest"' "${push_meta}") || die "no digest in the push metadata"
+check_digest "${new_digest}"
+verify_dir=$(mktemp -d "${work_dir}/verify.XXXXXX") || die "cannot create a work directory"
+ghcr_inspect "${repo_path}" "${new_digest}" "${verify_dir}"
 [ -f "${verify_dir}/config.json" ] || die "the pushed image is not on the registry"
-new_digest=$(ghcr_digest "${verify_dir}")
-[ "${new_digest}" != "${old_digest}" ] || die "the pushed image has the old digest"
+verify_digest=$(ghcr_digest "${verify_dir}")
+[ "${verify_digest}" = "${new_digest}" ] || die "the pushed manifest does not match its digest"
 new_created=$(ghcr_label "${verify_dir}" "${label_created}")
 [ "${new_created}" = "${created}" ] || die "the pushed image carries another creation time"
 printf 'sdk-image: pushed %s created %s\n' "${new_digest}" "${created}"
-if [ -n "${old_digest}" ]; then
-	list_versions "after the push, before the delete"
+
+if [ -n "${old_digest}" ] && [ "${old_digest}" != "${new_digest}" ]; then
+	check_digest "${old_digest}"
+	docker buildx imagetools create -t "${image}-prev" "${container}@${old_digest}" ||
+		die "cannot tag the superseded image as ${prev_tag}"
+	prev_check=$(mktemp -d "${work_dir}/prevcheck.XXXXXX") || die "cannot create a work directory"
+	ghcr_inspect "${repo_path}" "${prev_tag}" "${prev_check}"
+	[ -f "${prev_check}/config.json" ] || die "${prev_tag} is not on the registry"
+	prev_digest=$(ghcr_digest "${prev_check}")
+	[ "${prev_digest}" = "${old_digest}" ] || die "${prev_tag} does not hold the superseded digest ${old_digest}"
+	printf 'sdk-image: %s now holds %s\n' "${prev_tag}" "${old_digest}"
 fi
 
 deleted=none
-if [ -n "${old_digest}" ]; then
-	case "${old_digest}" in
-	sha256:*[!0-9a-f]* | sha256:) die "invalid old digest" ;;
-	*) ;;
-	esac
+# Only after the superseded image was kept as <tag>-prev.
+if [ -n "${old_prev}" ] && [ -n "${old_digest}" ] && [ "${old_prev}" != "${old_digest}" ] &&
+	[ "${old_prev}" != "${new_digest}" ]; then
+	check_digest "${old_prev}"
+	list_versions "after the push, before the delete"
 	old_id=$(gh api --paginate "/users/${owner}/packages/container/${package}/versions" \
-		--jq ".[] | select(.name == \"${old_digest}\") | .id") ||
-		die "cannot look up the superseded version"
+		--jq ".[] | select(.name == \"${old_prev}\") | .id") ||
+		die "cannot look up the version of the former ${prev_tag}"
 	case "${old_id}" in
-	*[!0-9]* | '') die "expected one superseded version id for ${old_digest}" ;;
-	*) ;;
+	'') printf 'sdk-image: version %s is already gone\n' "${old_prev}" ;;
+	*[!0-9]*) die "expected one version id for ${old_prev}" ;;
+	*)
+		gh api -X DELETE "/users/${owner}/packages/container/${package}/versions/${old_id}" ||
+			die "cannot delete the version ${old_id}"
+		deleted="${old_id} (${old_prev})"
+		printf 'sdk-image: deleted the former %s version %s\n' "${prev_tag}" "${deleted}"
+		;;
 	esac
-	gh api -X DELETE "/users/${owner}/packages/container/${package}/versions/${old_id}" ||
-		die "cannot delete the superseded version ${old_id}"
-	deleted="${old_id} (${old_digest})"
-	printf 'sdk-image: deleted superseded version %s\n' "${deleted}"
 fi
 list_versions "after the delete"
 
-if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-	{
-		printf '### sdk image %s\n' "${tag}"
-		printf -- '- decision: rebuild (%s)\n' "${reason}"
-		printf -- '- digest: %s, created %s\n' "${new_digest}" "${created}"
-		printf -- '- SDK archive: %s (sha256 %s)\n' "${archive_name}" "${archive_sha}"
-		printf -- '- superseded version deleted: %s\n' "${deleted}"
-	} >>"${GITHUB_STEP_SUMMARY}"
+# Tell when another run moved the tag after our push; both images are valid.
+tag_dir=$(mktemp -d "${work_dir}/tag.XXXXXX") || die "cannot create a work directory"
+ghcr_inspect "${repo_path}" "${tag}" "${tag_dir}"
+tag_digest=$(ghcr_digest "${tag_dir}")
+if [ "${tag_digest}" != "${new_digest}" ]; then
+	printf 'warn: %s was moved by another run after the push of %s\n' "${tag}" "${new_digest}" >&2
 fi
+
+write_summary "${new_digest}" "${created}" "SDK archive: ${archive_name} (sha256 ${archive_sha}); ${prev_tag}: ${old_digest:-none}; deleted version: ${deleted}"

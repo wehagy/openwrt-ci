@@ -40,8 +40,8 @@ ghcr_write_curl_config() {
 # exists. Any other answer aborts.
 #
 # Arguments:
-#   $1  repository path, e.g. wehagy/openwrt-sdk
-#   $2  tag
+#   $1  repository path, e.g. <owner>/openwrt-sdk
+#   $2  tag or digest
 #   $3  existing empty work directory
 ghcr_inspect() {
 	gi_repo=$1
@@ -107,4 +107,22 @@ ghcr_label() {
 #   $1  work directory given to ghcr_inspect
 ghcr_digest() {
 	cat "$1/digest" || die "no digest: the image was not found"
+}
+
+# Abort unless the argument is a sha256 image digest: sha256: and 64 lowercase
+# hex digits. The value is never echoed (see check_package_name in common.sh).
+#
+# Arguments:
+#   $1  digest
+check_digest() {
+	case "$1" in
+	sha256:*) ;;
+	*) die "invalid digest (allowed: sha256:<64 hex digits>)" ;;
+	esac
+	cd_hex=${1#sha256:}
+	case "${cd_hex}" in
+	*[!0-9a-f]* | '') die "invalid digest (allowed: sha256:<64 hex digits>)" ;;
+	*) ;;
+	esac
+	[ "${#cd_hex}" -eq 64 ] || die "invalid digest (not 64 hex digits)"
 }

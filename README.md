@@ -340,6 +340,13 @@ a test repository, an upstream pull request) passes:
   during the run, and fail if the checkout is not at that SHA.
 - The summary of each `sdk` job has `packages feed: <repository> <ref> @ <sha>`.
 - A caller reads the outputs with `needs.build.outputs.feed_sha` etc.
+- Both summaries are also printed to the job log (`tee`), so the values can be
+  read without the web page.
+- `package` is passed to the SDK as the package to compile and must also be the
+  name of the `.apk`: a source package whose apk has another name (e.g. `udns`
+  builds `libudns`) fails at "no <package> .apk" or, for the binary name, at
+  "No rule to make target package/<name>/download" (observed with PR 31056 of
+  `openwrt/packages`).
 - `images.yml` and `test.yml` do not read the feed: they use the `.apk` of the
   build artifact and the release or snapshot feed of OpenWrt, so they need no
   change.

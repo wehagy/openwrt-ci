@@ -38,7 +38,7 @@ manifest_count=$(printf '%s\n' "${manifest}" | wc -l)
 [ "${manifest_count}" -eq 1 ] ||
 	die "expected one .manifest in ${ib_dir}: ${manifest}"
 expected="${package} - ${version}"
-if ! grep -Fx -- "${expected}" "${manifest}"; then
+if ! grep -Fxq -- "${expected}" "${manifest}"; then
 	printf 'manifest lines mentioning %s:\n' "${package}" >&2
 	grep -F -- "${package}" "${manifest}" >&2 || printf '(none)\n' >&2
 	die "$(basename "${manifest}") has no line '${expected}'"

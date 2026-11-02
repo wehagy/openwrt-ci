@@ -541,8 +541,12 @@ Tests the base with the sample package `netbird`. Every call passes
 `ci_ref: ${{ github.sha }}`, the commit under test. On push to `feat/**` and on
 `workflow_dispatch`.
 Dispatch inputs: `refresh_sdk` (boolean, passed to `build.yml`) and `lines`
-(`both`, `25.12` or `main`: the other build job is skipped). Each build job
-has `packages: write`.
+(`both`, `25.12` or `main`: the other build job is skipped); `package`
+(default `netbird`), `feed_repository` and `feed_ref` (passed to `build.yml`,
+see "Feed source"); `stages` (`all`, or `build` to skip the test and image
+jobs). Each build job has `packages: write`. The job `feed-report` prints the
+feed outputs (`feed_repository`, `feed_ref`, `feed_sha`) of the builds that
+succeeded.
 
 | Job           | Calls       | Inputs                            | Needs         |
 |---------------|-------------|-----------------------------------|---------------|

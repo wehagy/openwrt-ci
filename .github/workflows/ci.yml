@@ -8,6 +8,11 @@
 # tests_path (harness/sample-tests, real checks of what the tests receive) and
 # test_secrets (SAMPLE_SECRET, not defined here: it must arrive exported empty).
 #
+# A manual run can also build another package tree (feed_repository, feed_ref:
+# a test repository or refs/pull/<n>/head of openwrt/packages) and, with
+# stages=build, stop after the build; the job feed-report prints the feed
+# outputs of build.yml.
+#
 # ci_ref is the commit under test: the called workflows check the scripts out
 # of that commit (not of main), so a branch tests its own scripts.
 name: ci
@@ -26,6 +31,23 @@ on:
         type: choice
         options: [both, "25.12", main]
         default: both
+      package:
+        description: Package to build (default netbird)
+        type: string
+        default: netbird
+      feed_repository:
+        description: Repository of the package tree (default openwrt/packages)
+        type: string
+        default: ""
+      feed_ref:
+        description: Ref of the package tree (default - the branch of the line)
+        type: string
+        default: ""
+      stages:
+        description: Stop after the build, or also test and build the images
+        type: choice
+        options: [all, build]
+        default: all
 
 permissions:
   contents: read
@@ -41,8 +63,10 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: "25.12"
-      package: netbird
+      package: ${{ inputs.package || 'netbird' }}
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
+      feed_repository: ${{ inputs.feed_repository }}
+      feed_ref: ${{ inputs.feed_ref }}
 
   build-main:
     if: ${{ inputs.lines != '25.12' }}
@@ -53,16 +77,19 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: main
-      package: netbird
+      package: ${{ inputs.package || 'netbird' }}
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
+      feed_repository: ${{ inputs.feed_repository }}
+      feed_ref: ${{ inputs.feed_ref }}
 
   test-25-12:
+    if: ${{ inputs.stages != 'build' }}
     needs: build-25-12
     uses: ./.github/workflows/test.yml
     with:
       ci_ref: ${{ github.sha }}
       line: "25.12"
-      package: netbird
+      package: ${{ inputs.package || 'netbird' }}
       source: artifact
       tests_path: harness/sample-tests
       test_secrets: SAMPLE_SECRET
@@ -70,29 +97,53 @@ jobs:
 
   # Snapshot images of line main, with the package built from the main SDK.
   test-main:
+    if: ${{ inputs.stages != 'build' }}
     needs: build-main
     uses: ./.github/workflows/test.yml
     with:
       ci_ref: ${{ github.sha }}
       line: main
-      package: netbird
+      package: ${{ inputs.package || 'netbird' }}
       source: artifact
       tests_path: harness/sample-tests
       test_secrets: SAMPLE_SECRET
     secrets: inherit
 
   image-25-12:
+    if: ${{ inputs.stages != 'build' }}
     needs: build-25-12
     uses: ./.github/workflows/images.yml
     with:
       ci_ref: ${{ github.sha }}
       line: "25.12"
-      package: netbird
+      package: ${{ inputs.package || 'netbird' }}
 
   image-main:
+    if: ${{ inputs.stages != 'build' }}
     needs: build-main
     uses: ./.github/workflows/images.yml
     with:
       ci_ref: ${{ github.sha }}
       line: main
-      package: netbird
+      package: ${{ inputs.package || 'netbird' }}
+
+  # What the callers of build.yml read: the feed outputs of the builds.
+  feed-report:
+    if: ${{ !cancelled() && (needs.build-25-12.result == 'success' || needs.build-main.result == 'success') }}
+    needs: [build-25-12, build-main]
+    runs-on: ubuntu-26.04
+    env:
+      B2512_REPOSITORY: ${{ needs.build-25-12.outputs.feed_repository }}
+      B2512_REF: ${{ needs.build-25-12.outputs.feed_ref }}
+      B2512_SHA: ${{ needs.build-25-12.outputs.feed_sha }}
+      BMAIN_REPOSITORY: ${{ needs.build-main.outputs.feed_repository }}
+      BMAIN_REF: ${{ needs.build-main.outputs.feed_ref }}
+      BMAIN_SHA: ${{ needs.build-main.outputs.feed_sha }}
+    steps:
+      - name: Print the feed outputs
+        run: |
+          {
+            echo "### feed outputs of build.yml"
+            echo "- 25.12: repository=${B2512_REPOSITORY} ref=${B2512_REF} sha=${B2512_SHA}"
+            echo "- main: repository=${BMAIN_REPOSITORY} ref=${BMAIN_REF} sha=${BMAIN_SHA}"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"

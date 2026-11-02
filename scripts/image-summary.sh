@@ -37,7 +37,8 @@ status=${HARNESS_JOB_STATUS:?HARNESS_JOB_STATUS is required}
 # Markdown code fence.
 fence="\`\`\`"
 
-# Print "- label: <content of a one-line file>" if the file exists.
+# Print "- label: <content of a one-line file> <unit>" if the file exists (no
+# trailing space without a unit).
 #
 # Arguments:
 #   $1  label
@@ -46,7 +47,11 @@ fence="\`\`\`"
 file_item() {
 	if [ -f "$2" ]; then
 		read -r fi_value <"$2"
-		printf -- '- %s: %s %s\n' "$1" "${fi_value}" "$3"
+		if [ -n "$3" ]; then
+			printf -- '- %s: %s %s\n' "$1" "${fi_value}" "$3"
+		else
+			printf -- '- %s: %s\n' "$1" "${fi_value}"
+		fi
 	fi
 }
 

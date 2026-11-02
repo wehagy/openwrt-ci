@@ -74,7 +74,7 @@ sdk_decide() {
 	sd_age=$(($3 - sd_created))
 	if [ -n "$5" ] && [ "${sd_created}" -lt "$5" ]; then
 		printf 'rebuild refresh_sdk requested (age %s s)\n' "${sd_age}"
-	elif sd_fresh=$(sdk_freshness "${sd_created}" "$3" "$4") && [ "${sd_fresh}" = fresh ]; then
+	elif sd_fresh=$(sdk_freshness "${sd_created}" "$3" "$4") && [ "${sd_fresh}" = stale ]; then
 		if [ -n "$5" ]; then
 			printf 'reuse refreshed since the request (age %s s <= %s day(s))\n' "${sd_age}" "$4"
 		else

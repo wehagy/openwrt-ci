@@ -10,8 +10,9 @@
 #
 # Environment variables:
 #   HARNESS_DIR                 directory with lines.yml (default: <repo>/harness)
-#   HARNESS_SDK_CONTAINER       harness SDK image repository
-#                               (default: ghcr.io/wehagy/openwrt-sdk)
+#   HARNESS_SDK_CONTAINER       harness SDK image repository, required; set
+#                               once, in .github/workflows/build.yml
+#                               (ghcr.io/<owner>/openwrt-sdk)
 #   HARNESS_SDK_BASE_CONTAINER  official SDK image repository
 #                               (default: docker.io/openwrt/sdk)
 
@@ -33,7 +34,7 @@ case "${arch}" in
 esac
 lines_file=${HARNESS_DIR:-${script_dir}/../harness}/lines.yml
 # Registry names are lowercase; the owner may come from github.repository_owner.
-container=$(printf '%s\n' "${HARNESS_SDK_CONTAINER:-ghcr.io/wehagy/openwrt-sdk}" | tr '[:upper:]' '[:lower:]') ||
+container=$(printf '%s\n' "${HARNESS_SDK_CONTAINER:?HARNESS_SDK_CONTAINER is required}" | tr '[:upper:]' '[:lower:]') ||
 	die "cannot normalise the SDK container"
 check_sdk_container "${container}"
 base_container=${HARNESS_SDK_BASE_CONTAINER:-docker.io/openwrt/sdk}

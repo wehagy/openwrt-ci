@@ -1,10 +1,12 @@
 #!/usr/bin/env sh
-# Responsibility: read the harness SDK image of one build job anonymously from
-# GHCR (the same access the build gets) and print what the job summary
-# records as KEY=value lines: digest, creation time, SDK archive, its sha256
-# and whether this run rebuilt the image or reused one. It also fails the job
-# when the image is not publicly readable, is older than the line's maximum
-# age, or was not rebuilt by this run although a refresh was requested.
+# Responsibility: pin the harness SDK image of one build job. It reads the image
+# of the tag anonymously from GHCR (the same access the build gets) and prints
+# KEY=value lines: the pin <tag>@<digest> the build must use, the digest,
+# creation time, SDK archive, its sha256 and whether this run built the image
+# or reused one. It fails the job when the image is not publicly readable or
+# its labels are invalid. It does not apply the age rule again: whether the
+# image is fresh enough was decided by the sdk-image job of this run (an image
+# reused at 23 h 55 min must not fail the build that starts after 24 h).
 # Nothing is printed unless every check passed, so the output is safe for
 # $GITHUB_ENV.
 #
@@ -12,8 +14,7 @@
 #   scripts/sdk-image-info.sh >> "$GITHUB_ENV"
 #
 # Environment variables (set by scripts/resolve-sdk.sh and the workflow):
-#   HARNESS_SDK_CONTAINER, HARNESS_SDK_ARCH, HARNESS_SDK_MAX_AGE_DAYS
-#   HARNESS_REFRESH_SDK  true when the run asked for a refresh (default: false)
+#   HARNESS_SDK_CONTAINER, HARNESS_SDK_ARCH
 #   GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT
 
 set -eu
@@ -34,15 +35,11 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 
 container=${HARNESS_SDK_CONTAINER:?HARNESS_SDK_CONTAINER is required}
 tag=${HARNESS_SDK_ARCH:?HARNESS_SDK_ARCH is required}
-max_days=${HARNESS_SDK_MAX_AGE_DAYS:?HARNESS_SDK_MAX_AGE_DAYS is required}
-refresh=${HARNESS_REFRESH_SDK:-false}
 run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
 run_attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
 
 check_sdk_container "${container}"
 check_sdk_tag "${tag}"
-check_max_age_days "${max_days}"
-check_bool "${refresh}"
 case "${run_id}${run_attempt}" in
 *[!0-9]* | '') die "invalid run id or attempt" ;;
 *) ;;
@@ -64,6 +61,7 @@ built_run=$(ghcr_label "${work_dir}" "${label_run_id}")
 built_attempt=$(ghcr_label "${work_dir}" "${label_run_attempt}")
 
 created_epoch=$(utc_to_epoch "${created}")
+check_digest "${digest}"
 check_sdk_archive "${archive_sha}" "${archive}"
 case "${built_run}${built_attempt}" in
 *[!0-9]* | '') die "invalid run labels on the SDK image" ;;
@@ -76,14 +74,11 @@ else
 	state=reused
 fi
 
+# stderr: stdout goes to $GITHUB_ENV.
 now=$(date +%s)
-freshness=$(sdk_freshness "${created_epoch}" "${now}" "${max_days}")
-[ "${freshness}" = fresh ] ||
-	die "the SDK image is older than ${max_days} day(s) (created ${created})"
-if [ "${refresh}" = true ] && [ "${state}" != rebuilt ]; then
-	die "refresh_sdk was requested but this run did not rebuild the SDK image"
-fi
-
+printf 'sdk-image-info: pinned %s@%s, age %s s (not re-checked: decided by sdk-image)\n' \
+	"${tag}" "${digest}" "$((now - created_epoch))" >&2
+printf 'HARNESS_SDK_PIN=%s@%s\n' "${tag}" "${digest}"
 printf 'HARNESS_SDK_DIGEST=%s\n' "${digest}"
 printf 'HARNESS_SDK_CREATED=%s\n' "${created}"
 printf 'HARNESS_SDK_ARCHIVE=%s\n' "${archive}"

@@ -6,8 +6,9 @@
 # derived from the official snapshot SDK container with setup.sh already run
 # (the SDK download from the OpenWrt mirror takes ~14 min). The `sdk-image` job
 # rebuilds it when it is missing, older than the line's sdk_max_age_days or
-# refresh_sdk is set; otherwise it is reused. The caller must grant
-# `packages: write` to the job that calls this workflow.
+# refresh_sdk is set; otherwise it is reused. The `sdk` job pins the image by
+# digest, so the build never reads an image another run replaces. The caller
+# must grant `packages: write` to the job that calls this workflow.
 name: build
 
 on:
@@ -30,11 +31,20 @@ on:
 permissions:
   contents: read
 
+# The one place that names the SDK image repository: published by `sdk-image`,
+# read by `sdk` and passed to openwrt/gh-action-sdk as CONTAINER
+# (scripts/resolve-sdk.sh lowercases it and has no default of its own).
+env:
+  HARNESS_SDK_CONTAINER: ghcr.io/${{ github.repository_owner }}/openwrt-sdk
+
 jobs:
-  # One run at a time per (line, arch) image, across runs and workflows, so
-  # parallel runs never rebuild the same image at once; a waiting run then
-  # finds the image fresh and reuses it. GitHub keeps one running and one
-  # pending job per group, so a third concurrent run cancels the pending one.
+  # No `concurrency` group: GitHub keeps one running and one pending job per
+  # group and cancels the older pending one, which would cancel the build of a
+  # run whenever 3 runs (or the packages of the next slice) need the same
+  # rebuild. Instead, scripts/sdk-image-ensure.sh decides again after its
+  # local build, just before the push, and discards the build if another run
+  # pushed a fresh image meanwhile; it keeps the superseded image as
+  # <tag>-prev, so an in-flight build that pinned it keeps working.
   sdk-image:
     name: sdk-image ${{ inputs.line }} ${{ matrix.arch }}
     runs-on: ubuntu-26.04
@@ -42,9 +52,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    concurrency:
-      group: sdk-image-${{ inputs.line }}-${{ matrix.arch }}
-      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -55,7 +62,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
-      HARNESS_SDK_CONTAINER: ghcr.io/${{ github.repository_owner }}/openwrt-sdk
       HARNESS_REFRESH_SDK: ${{ inputs.refresh_sdk }}
     steps:
       - uses: actions/checkout@v7.0.1
@@ -118,11 +124,10 @@ jobs:
           path: packages-feed
           persist-credentials: false
 
-      # Reads the SDK image anonymously, as the build below pulls it, and
-      # fails if it is private, too old or not refreshed when it should be.
-      - name: Check the SDK image
-        env:
-          HARNESS_REFRESH_SDK: ${{ inputs.refresh_sdk }}
+      # Pins the SDK image: reads it anonymously, as the build below pulls
+      # it, fails if it is private, and records <tag>@<digest> (HARNESS_SDK_PIN).
+      # The age is not checked again: sdk-image decided it for this run.
+      - name: Pin the SDK image
         run: |
           info=$(scripts/sdk-image-info.sh)
           echo "${info}" | tee -a "${GITHUB_ENV}"
@@ -141,7 +146,8 @@ jobs:
       - uses: openwrt/gh-action-sdk@f5813d30eeef3534b58ac7e79c5d8842b6035434
         env:
           CONTAINER: ${{ env.HARNESS_SDK_CONTAINER }}
-          ARCH: ${{ env.HARNESS_SDK_ARCH }}
+          # The action builds `FROM $CONTAINER:$ARCH`; <tag>@<digest> is valid.
+          ARCH: ${{ env.HARNESS_SDK_PIN }}
           FEED_DIR: ${{ github.workspace }}/packages-feed
           ARTIFACTS_DIR: ${{ env.SDK_OUT }}
           PACKAGES: ${{ env.HARNESS_PACKAGE }}

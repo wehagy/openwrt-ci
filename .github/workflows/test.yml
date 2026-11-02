@@ -232,6 +232,16 @@ jobs:
           cp ci-base/harness/openwrt-tests.uv.lock openwrt-tests/uv.lock
           uv --project openwrt-tests sync --locked
 
+      # Retry helpers of the harness (the `apk update` flake handling) with a
+      # stub in place of the VM; no secrets, no QEMU.
+      - name: Harness helpers self-test
+        env:
+          PYTHONPATH: ci-base/harness/tests
+        run: >-
+          uv --project openwrt-tests run --locked pytest
+          ci-base/harness/selftests -c /dev/null
+          --rootdir=ci-base/harness/selftests -p no:cacheprovider
+
       # The caller secrets named by test_secrets reach only the pytest process
       # (ci-base/scripts/with-test-secrets.sh), never GITHUB_ENV. `exec`
       # replaces this step's bash by the wrapper, which removes

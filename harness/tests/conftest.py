@@ -19,12 +19,22 @@ CI environment fixes, measured in the spike (runs 41354702952 and later):
 After F1 and F2 the setup waits until the VM resolves an A record for
 downloads.openwrt.org and has a default route, so the tests start from a
 network that works.
+
+  F3  Right after the route appears, one of the parallel fetches of the first
+      `apk update` can fail with `wget: Failed to send request: Operation not
+      permitted` while the others succeed (malta-le and malta-be, runs
+      41427983225 and 41360955048; a different repository each time, so not
+      a missing file). The route and the name resolve already, so the wait
+      above cannot see it; the cause inside the VM was not proven. `apk
+      update` only refreshes the indexes, so it is repeated a bounded number
+      of times; every failed attempt is logged and the last failure fails
+      the session with the output of all attempts.
 """
 
 import re
 
 import pytest
-from harness_util import poll
+from harness_util import apk_update, poll
 
 CMD_TIMEOUT = 600
 # Every command of a poll is short; a hung ssh must not outlive the deadline.
@@ -94,4 +104,4 @@ def ci_network(vm_ssh):
         f" and an A record for {DNS_NAME}): {detail}"
     )
 
-    vm_ssh.run_check("apk update", timeout=CMD_TIMEOUT)
+    apk_update(vm_ssh, CMD_TIMEOUT)

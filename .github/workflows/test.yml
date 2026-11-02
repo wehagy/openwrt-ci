@@ -21,6 +21,13 @@ on:
 permissions:
   contents: read
 
+# `shell: bash` makes GitHub run `bash --noprofile --norc -eo pipefail {0}`;
+# the default `bash -e {0}` has no pipefail, so `script | tee` would hide the
+# script's failure.
+defaults:
+  run:
+    shell: bash
+
 env:
   OPENWRT_TESTS_REF: b3a04b2e08f3ea38e5aa931d4cbe87b30ac8e105
   # Python for the openwrt-tests environment; harness/openwrt-tests.uv.lock
@@ -53,14 +60,19 @@ jobs:
           LINE: ${{ inputs.line }}
         run: scripts/matrix.sh "${LINE}" | tee -a "${GITHUB_OUTPUT}"
 
+      # Fail here, not later in the qemu job's fromJSON, if no matrix was set.
+      - name: Check matrix
+        env:
+          MATRIX: ${{ steps.matrix.outputs.matrix }}
+        run: |
+          [ -n "${MATRIX}" ] || { echo "::error::matrix output is empty"; exit 1; }
+          printf 'matrix=%s\n' "${MATRIX}"
+
   qemu:
     needs: targets
     name: ${{ inputs.line }} ${{ matrix.target }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    defaults:
-      run:
-        shell: bash # adds pipefail, so `script | tee` keeps the script's status
     strategy:
       fail-fast: false
       matrix:

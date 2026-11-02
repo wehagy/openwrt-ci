@@ -1,0 +1,131 @@
+# Reusable workflow: build firmware images with the official OpenWrt
+# ImageBuilder, one job per profile of harness/images.yml, with the package
+# built by build.yml (artifact apk-<package>-<line>-<arch>) installed in each.
+name: images
+
+on:
+  workflow_call:
+    inputs:
+      line:
+        description: OpenWrt line, a key of harness/lines.yml (e.g. "25.12")
+        type: string
+        required: true
+      package:
+        description: >-
+          Package name; its apk-<package>-<line>-<arch> artifacts from
+          build.yml in the same workflow run are installed in the images
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# `shell: bash` makes GitHub run `bash --noprofile --norc -eo pipefail {0}`;
+# the default `bash -e {0}` has no pipefail, so `script | tee` would hide the
+# script's failure.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # The profiles come from harness/images.yml, not from this file.
+  profiles:
+    name: profiles ${{ inputs.line }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate inputs
+        env:
+          HARNESS_LINE: ${{ inputs.line }}
+          HARNESS_PACKAGE: ${{ inputs.package }}
+          HARNESS_SOURCE: artifact
+        run: scripts/validate-inputs.sh
+
+      - name: Build matrix
+        id: matrix
+        run: scripts/image-matrix.sh | tee -a "${GITHUB_OUTPUT}"
+
+      # Fail here, not later in the image job's fromJSON, if no matrix was set.
+      - name: Check matrix
+        env:
+          MATRIX: ${{ steps.matrix.outputs.matrix }}
+        run: |
+          [ -n "${MATRIX}" ] || { echo "::error::matrix output is empty"; exit 1; }
+          printf 'matrix=%s\n' "${MATRIX}"
+
+  image:
+    needs: profiles
+    name: ${{ inputs.line }} ${{ matrix.profile }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.profiles.outputs.matrix) }}
+    env:
+      IB_OUT: ${{ github.workspace }}/ib-out
+      IMAGE_OUT: ${{ github.workspace }}/image-out
+      APK_IN: ${{ github.workspace }}/apk-in
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # Validates the inputs; the output is written to $GITHUB_ENV only when
+      # the script succeeded.
+      - name: Resolve line, profile and package
+        env:
+          LINE: ${{ inputs.line }}
+          PROFILE_ID: ${{ matrix.profile }}
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          resolved=$(scripts/resolve-image.sh "${LINE}" "${PROFILE_ID}" "${PACKAGE}")
+          echo "${resolved}" | tee -a "${GITHUB_ENV}"
+
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: apk-${{ env.HARNESS_PACKAGE }}-${{ inputs.line }}-${{ env.HARNESS_ARCH }}
+          path: ${{ env.APK_IN }}
+
+      - name: Record the package version
+        run: |
+          . scripts/lib/common.sh
+          apk=$(find_apk "${APK_IN}" "${HARNESS_PACKAGE}")
+          version=$(apk_version "${apk}" "${HARNESS_PACKAGE}")
+          echo "HARNESS_PACKAGE_VERSION=${version}" | tee -a "${GITHUB_ENV}"
+
+      - name: Pull the ImageBuilder image
+        run: scripts/pull-imagebuilder.sh "${HARNESS_IB_IMAGE}" | tee -a "${GITHUB_ENV}"
+
+      # The container user (uid 1000) is not the runner user, so the output
+      # directory is world-writable.
+      - name: Build the image
+        run: |
+          mkdir -m 0777 "${IB_OUT}"
+          docker run --rm \
+            --env HARNESS_PROFILE --env HARNESS_PACKAGES --env HARNESS_PACKAGE \
+            --env HARNESS_TARGET_PATH --env HARNESS_IB_SETUP \
+            --volume "${GITHUB_WORKSPACE}/scripts:/harness/scripts:ro" \
+            --volume "${APK_IN}:/harness/in:ro" \
+            --volume "${IB_OUT}:/harness/out" \
+            "${HARNESS_IB_IMAGE}" sh /harness/scripts/imagebuilder-make.sh
+
+      - name: Check the manifest and collect the images
+        run: scripts/collect-images.sh "${IB_OUT}" "${IMAGE_OUT}" | tee -a "${GITHUB_ENV}"
+
+      - name: Summary
+        if: ${{ !cancelled() && env.HARNESS_IB_IMAGE != '' }}
+        env:
+          HARNESS_JOB_STATUS: ${{ job.status }}
+        run: scripts/image-summary.sh "${IB_OUT}" "${IMAGE_OUT}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: images-${{ env.HARNESS_PACKAGE }}-${{ inputs.line }}-${{ matrix.profile }}
+          path: ${{ env.IMAGE_OUT }}
+          if-no-files-found: error

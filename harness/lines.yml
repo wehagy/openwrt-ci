@@ -15,8 +15,11 @@
 #                            rule in scripts/lib/sdk-age.sh); the build pins
 #                            the image by digest and does not re-apply it
 #   packages_branch          branch of the openwrt/packages feed
-#   imagebuilder_tag_suffix  suffix of the ImageBuilder container tag
-#                            (not read yet; keep it)
+#   imagebuilder_tag_suffix  suffix of the ImageBuilder container tag of a
+#                            "snapshot" line (a tag that ships only setup.sh);
+#                            a "releases" line uses its latest release
+#                            instead (the release image embeds the
+#                            ImageBuilder); read by scripts/resolve-image.sh
 #   release_source           "releases": the latest release of the line is
 #                            found in releases_index_url; "snapshot": the
 #                            line has no releases and the version is the
@@ -36,8 +39,10 @@
 #   feed_base_url            apk feed (index.json and *.apk)
 #
 # The build workflow reads sdk_tag_suffix, sdk_max_age_days and
-# packages_branch; the QEMU test workflow reads the other keys. Each line has
-# the keys of its release_source only.
+# packages_branch; the image workflow reads release_source,
+# imagebuilder_tag_suffix and, for a release, releases_index_url and
+# release_regex; the QEMU test workflow reads the other keys. Each line has the
+# keys of its release_source only.
 
 lines:
   "25.12":

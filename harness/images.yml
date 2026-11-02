@@ -1,0 +1,53 @@
+# Responsibility: per-profile data of the image workflow (images.yml).
+#
+# Top-level keys:
+#   extra_packages  packages added to every image next to the built package
+#   image_globs     file name globs of the images kept as artifacts (the
+#                   firmware to flash; rootfs/kernel parts are left out)
+#   profiles        one entry per image, keyed by the id used in the job
+#                   name and in the artifact name images-<package>-<line>-<id>
+#
+# Keys of a profile:
+#   target, subtarget  OpenWrt target; the ImageBuilder container is
+#                      docker.io/openwrt/imagebuilder:<target>-<subtarget>-<tag>
+#   profile            ImageBuilder PROFILE
+#   arch               package architecture: the built package comes from the
+#                      artifact apk-<package>-<line>-<arch> of build.yml
+#
+# Profiles and extra packages are those of wehagy/owpib.
+
+extra_packages: luci-app-attendedsysupgrade luci-app-uhttpd luci-ssl owut
+
+image_globs: "*sysupgrade* *factory* *combined* *sdcard*"
+
+profiles:
+  x86-64-generic:
+    target: x86
+    subtarget: "64"
+    profile: generic
+    arch: x86_64
+  xiaomi-mi-router-ax3000t-ubootmod:
+    target: mediatek
+    subtarget: filogic
+    profile: xiaomi_mi-router-ax3000t-ubootmod
+    arch: aarch64_cortex-a53
+  acer-predator-w6x-stock:
+    target: mediatek
+    subtarget: filogic
+    profile: acer_predator-w6x-stock
+    arch: aarch64_cortex-a53
+  bananapi-bpi-r3:
+    target: mediatek
+    subtarget: filogic
+    profile: bananapi_bpi-r3
+    arch: aarch64_cortex-a53
+  tplink-archer-c7-v4:
+    target: ath79
+    subtarget: generic
+    profile: tplink_archer-c7-v4
+    arch: mips_24kc
+  totolink-x5000r:
+    target: ramips
+    subtarget: mt7621
+    profile: totolink_x5000r
+    arch: mipsel_24kc

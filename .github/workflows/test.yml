@@ -46,6 +46,23 @@ on:
         type: string
         required: false
         default: ""
+      targets:
+        description: >-
+          QEMU test targets to run, ids of harness/targets.yml separated by
+          spaces or newlines (x86-64, armsr-armv8, malta-le, malta-be).
+          Empty: all of them. Pass the same value to build.yml, so that the
+          architectures of these targets are built.
+        type: string
+        required: false
+        default: ""
+      memory:
+        description: >-
+          VM memory of every test target, NNNM from 64M to 1024M. Empty: the
+          memory of harness/targets.yml (128M, the default of
+          aparcar/openwrt-tests).
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -94,6 +111,11 @@ jobs:
       - name: Self-test the caller inputs
         run: ci-base/scripts/caller-inputs-selftest.sh
 
+      # The validators and the selection of the test targets, with fixed
+      # inputs and a fake mirror (needs jq, yq, curl).
+      - name: Image inputs self-test
+        run: ci-base/scripts/image-inputs-selftest.sh
+
       - name: Validate inputs
         env:
           HARNESS_LINE: ${{ inputs.line }}
@@ -101,13 +123,20 @@ jobs:
           HARNESS_SOURCE: ${{ inputs.source }}
           HARNESS_TESTS_PATH: ${{ inputs.tests_path }}
           HARNESS_TEST_SECRETS: ${{ inputs.test_secrets }}
+          HARNESS_TARGETS: ${{ inputs.targets }}
+          HARNESS_MEMORY_INPUT: ${{ inputs.memory }}
         run: ci-base/scripts/validate-inputs.sh
 
       - name: Build matrix
         id: matrix
         env:
           LINE: ${{ inputs.line }}
-        run: ci-base/scripts/matrix.sh "${LINE}" | tee -a "${GITHUB_OUTPUT}"
+          HARNESS_TARGETS: ${{ inputs.targets }}
+          HARNESS_MEMORY_INPUT: ${{ inputs.memory }}
+        run: |
+          ci-base/scripts/matrix.sh "${LINE}" | tee -a "${GITHUB_OUTPUT}"
+          memory="${HARNESS_MEMORY_INPUT:-default of harness/targets.yml}"
+          echo "memory: ${memory}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
       # Fail here, not later in the qemu job's fromJSON, if no matrix was set.
       - name: Check matrix
@@ -183,6 +212,7 @@ jobs:
         env:
           LINE: ${{ inputs.line }}
           TARGET: ${{ matrix.target }}
+          HARNESS_MEMORY_INPUT: ${{ inputs.memory }}
         run: ci-base/scripts/resolve.sh "${LINE}" "${TARGET}" | tee -a "${GITHUB_ENV}"
 
       - name: Enable KVM

@@ -55,11 +55,16 @@ check_charset "profile id" "${PROFILE_ID}" '[!a-z0-9-]'
 if [ -n "${package}" ]; then
 	check_package_name "${package}"
 fi
-target=${HARNESS_IMAGE_TARGET:?HARNESS_IMAGE_TARGET is required}
-subtarget=${HARNESS_IMAGE_SUBTARGET:?HARNESS_IMAGE_SUBTARGET is required}
-profile=${HARNESS_IMAGE_DEVICE:?HARNESS_IMAGE_DEVICE is required}
-arch=${HARNESS_IMAGE_ARCH:?HARNESS_IMAGE_ARCH is required}
-expect=${HARNESS_IMAGE_EXPECT:?HARNESS_IMAGE_EXPECT is required}
+target=${HARNESS_IMAGE_TARGET:-}
+[ -n "${target}" ] || die "HARNESS_IMAGE_TARGET is required"
+subtarget=${HARNESS_IMAGE_SUBTARGET:-}
+[ -n "${subtarget}" ] || die "HARNESS_IMAGE_SUBTARGET is required"
+profile=${HARNESS_IMAGE_DEVICE:-}
+[ -n "${profile}" ] || die "HARNESS_IMAGE_DEVICE is required"
+arch=${HARNESS_IMAGE_ARCH:-}
+[ -n "${arch}" ] || die "HARNESS_IMAGE_ARCH is required"
+expect=${HARNESS_IMAGE_EXPECT:-}
+[ -n "${expect}" ] || die "HARNESS_IMAGE_EXPECT is required"
 image_packages=${HARNESS_IMAGE_PACKAGES:-}
 harness_dir=${HARNESS_DIR:-${script_dir}/../harness}
 lines_file=${harness_dir}/lines.yml

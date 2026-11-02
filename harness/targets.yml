@@ -4,11 +4,12 @@
 #   lg_env    target file in aparcar/openwrt-tests/targets/
 #   arch      package architecture of the official apk feed
 #   path      target path below the release directory
-#   memory    VM memory (armsr-armv8 and the malta targets run from RAM and
-#             need 256M; x86-64 has 256M too: with 128M `apk info -L` took
-#             up to 15 s after the install and once over 30 s, run
-#             41437522326 job 125258840649, likely memory pressure of the
-#             package's service in the VM - not proven)
+#   memory    VM memory. The default is 128M for every target, the value of
+#             the targets/qemu_*.yaml of aparcar/openwrt-tests (checked at
+#             b3a04b2). A caller overrides it for all the targets it tests with
+#             the `memory` input of test.yml (64M-1024M) when its package needs
+#             more: netbird needs 256M (OOM-killed at 128M on x86-64, run
+#             41480369349).
 #   kvm       true when the runner offers /dev/kvm for this guest architecture
 #   qemu_pkg  apt package providing the qemu-system binary
 #   images    image file name per line; {release} is expanded. A line that is
@@ -20,7 +21,7 @@ targets:
     lg_env: qemu_x86-64.yaml
     arch: x86_64
     path: x86/64
-    memory: 256M
+    memory: 128M
     kvm: true
     qemu_pkg: qemu-system-x86
     images:
@@ -30,7 +31,7 @@ targets:
     lg_env: qemu_armsr-armv8.yaml
     arch: aarch64_generic
     path: armsr/armv8
-    memory: 256M
+    memory: 128M
     kvm: false
     qemu_pkg: qemu-system-arm
     images:
@@ -40,7 +41,7 @@ targets:
     lg_env: qemu_malta-le.yaml
     arch: mipsel_24kc
     path: malta/le
-    memory: 256M
+    memory: 128M
     kvm: false
     qemu_pkg: qemu-system-mips
     images:
@@ -50,7 +51,7 @@ targets:
     lg_env: qemu_malta-be.yaml
     arch: mips_24kc
     path: malta/be
-    memory: 256M
+    memory: 128M
     kvm: false
     qemu_pkg: qemu-system-mips
     images:

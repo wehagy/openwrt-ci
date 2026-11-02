@@ -18,6 +18,8 @@
 #                    (default: <repo>/harness)
 #   HARNESS_RELEASE  releases lines only: pin the release instead of scanning
 #                    the releases index (ignored on snapshot lines)
+#   HARNESS_MEMORY_INPUT  optional; VM memory (NNNM, 64M-1024M) used instead of
+#                    the target's `memory` of targets.yml
 
 set -eu
 
@@ -91,6 +93,10 @@ feed_pattern=$(yq_get "${lines_file}" "${line_key}.feed_base_url")
 feed_url=$(expand "${feed_pattern}")
 lg_env=$(yq_get "${targets_file}" "${target_key}.lg_env")
 memory=$(yq_get "${targets_file}" "${target_key}.memory")
+if [ -n "${HARNESS_MEMORY_INPUT:-}" ]; then
+	check_vm_memory "${HARNESS_MEMORY_INPUT}"
+	memory=${HARNESS_MEMORY_INPUT}
+fi
 kvm=$(yq_get "${targets_file}" "${target_key}.kvm")
 qemu_pkg=$(yq_get "${targets_file}" "${target_key}.qemu_pkg")
 

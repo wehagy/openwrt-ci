@@ -283,6 +283,54 @@ check_secret_names() {
 	[ "${csn_count}" -le 32 ] || die "too many secret names (at most 32)"
 }
 
+# Abort unless the argument is a VM memory size for the QEMU tests: whole
+# megabytes written NNNM, from 64M to 1024M. The value is never echoed (see
+# check_package_name).
+#
+# Arguments:
+#   $1  memory
+check_vm_memory() {
+	case "$1" in
+	*[!0-9M]* | M* | *M?* | '') die "invalid VM memory (allowed: <megabytes>M from 64M to 1024M)" ;;
+	*M) ;;
+	*) die "invalid VM memory (allowed: <megabytes>M from 64M to 1024M)" ;;
+	esac
+	cvm_mb=${1%M}
+	case "${cvm_mb}" in
+	0* | '') die "invalid VM memory (allowed: <megabytes>M from 64M to 1024M)" ;;
+	*) ;;
+	esac
+	{ [ "${#cvm_mb}" -le 4 ] && [ "${cvm_mb}" -ge 64 ] && [ "${cvm_mb}" -le 1024 ]; } ||
+		die "invalid VM memory (allowed: <megabytes>M from 64M to 1024M)"
+}
+
+# Abort unless the argument is a list of QEMU test target ids separated by
+# spaces or newlines: 1 to 16 ids of [a-z0-9][a-z0-9-]*, at most 32 characters
+# each. Whether an id exists is checked against harness/targets.yml by
+# scripts/matrix.sh. The value is never echoed (see check_package_name).
+#
+# Arguments:
+#   $1  list
+check_target_ids() {
+	cti_list=$(printf '%s' "$1" | tr '\n\t\r' '   ') || die "cannot read the target list"
+	case "${cti_list}" in
+	*[!a-z0-9\ -]*) die "invalid test targets (allowed: ids of [a-z0-9][a-z0-9-]* separated by spaces)" ;;
+	*) ;;
+	esac
+	cti_count=0
+	# The charset check above excludes glob characters, so splitting is safe.
+	for cti_id in ${cti_list}; do
+		case "${cti_id}" in
+		-*) die "invalid test target id (must not start with -)" ;;
+		*) ;;
+		esac
+		[ "${#cti_id}" -le 32 ] || die "invalid test target id (longer than 32 chars)"
+		cti_count=$((cti_count + 1))
+	done
+	[ "${cti_count}" -ge 1 ] || die "no test target in the list"
+	[ "${cti_count}" -le 16 ] || die "too many test targets (at most 16)"
+}
+
 # Abort unless the argument is a GitHub repository, <owner>/<name>: owner
 # [A-Za-z0-9-] (at most 39 chars, no leading -), name [A-Za-z0-9._-] (at most
 # 100 chars, no leading -, not "." or "..", not ending in ".git"). The value

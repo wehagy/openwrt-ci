@@ -15,6 +15,9 @@
 #                        package tests (see check_tests_path in lib/common.sh)
 #   HARNESS_TEST_SECRETS optional; names of the caller secrets exported to the
 #                        tests (see check_secret_names in lib/common.sh)
+#   HARNESS_TARGETS      optional; QEMU test targets (syntax only here, see
+#                        check_target_ids; scripts/matrix.sh checks the ids)
+#   HARNESS_MEMORY_INPUT optional; VM memory (see check_vm_memory)
 
 set -eu
 
@@ -41,4 +44,11 @@ if [ -n "${HARNESS_TESTS_PATH:-}" ]; then
 fi
 if [ -n "${HARNESS_TEST_SECRETS:-}" ]; then
 	check_secret_names "${HARNESS_TEST_SECRETS}"
+fi
+targets_blank=$(printf '%s' "${HARNESS_TARGETS:-}" | tr -d ' \n\t\r') || die "cannot read the targets"
+if [ -n "${targets_blank}" ]; then
+	check_target_ids "${HARNESS_TARGETS}"
+fi
+if [ -n "${HARNESS_MEMORY_INPUT:-}" ]; then
+	check_vm_memory "${HARNESS_MEMORY_INPUT}"
 fi

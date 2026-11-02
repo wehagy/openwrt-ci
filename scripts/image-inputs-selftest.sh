@@ -163,6 +163,35 @@ else
 	record "image_packages_line joins with single spaces" 1 "got '${pl}'"
 fi
 
+# --- check_vm_memory and check_target_ids ------------------------------------
+
+for m in 64M 128M 256M 1000M 1024M; do
+	validator_case check_vm_memory accept "${m}" "'${m}'"
+done
+for m in '' 0 M 63M 1025M 2048M 99999M 128 128m 128G 128MB 128MM 0128M 064M 12.8M ' 128M' '128M ' -128M +128M \
+	'128M;id' "128M\$(id)" 'M128' '1e2M'; do
+	validator_case check_vm_memory reject "${m}" "'${m}'"
+done
+validator_case check_vm_memory reject "128M
+::error::x" "workflow command"
+
+validator_case check_target_ids accept "x86-64" "one"
+validator_case check_target_ids accept "x86-64 malta-le
+armsr-armv8" "spaces and newline"
+for t in '' '  ' -x 'X86' 'x_y' 'x;y' 'x.y' 'x/y' "x\$(id)" 'é'; do
+	validator_case check_target_ids reject "${t}" "'${t}'"
+done
+validator_case check_target_ids reject "x86-64
+::error::x" "workflow command"
+validator_case check_target_ids reject "${n33}" "33 char id"
+ids17=
+i=0
+while [ "${i}" -lt 17 ]; do
+	ids17="${ids17} t${i}"
+	i=$((i + 1))
+done
+validator_case check_target_ids reject "${ids17}" "17 ids"
+
 # --- check_arch_token ------------------------------------------------------
 
 for a in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4 @tests @profiles 0x; do
@@ -218,10 +247,13 @@ lines:
     releases_index_url: file://${mirror}/releases/index.html
     release_regex: '25\.12\.[0-9]+'
     image_base_url: file://${mirror}/releases/{release}/targets/{path}
+    feed_base_url: file://${mirror}/releases/{release}/packages/{arch}/packages
   main:
     imagebuilder_tag_suffix: main
     release_source: snapshot
+    snapshot_version_url: file://${mirror}/snapshots/targets/{path}/version.buildinfo
     image_base_url: file://${mirror}/snapshots/targets/{path}
+    feed_base_url: file://${mirror}/snapshots/packages/{arch}/packages
 EOF
 cat >"${fixtures}/images.yml" <<'EOF'
 image_globs: "*sysupgrade* *factory*"
@@ -230,18 +262,51 @@ EOF
 cat >"${fixtures}/targets.yml" <<'EOF'
 targets:
   x86-64:
+    lg_env: qemu_x86-64.yaml
     arch: x86_64
+    path: x86/64
+    memory: 128M
+    kvm: true
+    qemu_pkg: qemu-system-x86
+    images:
+      "25.12": openwrt-{release}-x86-64-generic-squashfs-combined.img.gz
+      main: openwrt-x86-64-generic-squashfs-combined.img.gz
   armsr-armv8:
+    lg_env: qemu_armsr-armv8.yaml
     arch: aarch64_generic
+    path: armsr/armv8
+    memory: 128M
+    kvm: false
+    qemu_pkg: qemu-system-arm
+    images:
+      "25.12": openwrt-{release}-armsr-armv8-generic-initramfs-kernel.bin
+      main: openwrt-armsr-armv8-generic-initramfs-kernel.bin
   malta-le:
+    lg_env: qemu_malta-le.yaml
     arch: mipsel_24kc
+    path: malta/le
+    memory: 128M
+    kvm: false
+    qemu_pkg: qemu-system-mips
+    images:
+      "25.12": openwrt-{release}-malta-le-vmlinux-initramfs.elf
+      main: openwrt-malta-le-generic-initramfs-kernel.bin
   malta-be:
+    lg_env: qemu_malta-be.yaml
     arch: mips_24kc
+    path: malta/be
+    memory: 128M
+    kvm: false
+    qemu_pkg: qemu-system-mips
+    images:
+      "25.12": openwrt-{release}-malta-be-vmlinux-initramfs.elf
 EOF
 export HARNESS_DIR="${fixtures}"
 
 rp=${script_dir}/resolve-profiles.sh
 ra=${script_dir}/resolve-archs.sh
+mx=${script_dir}/matrix.sh
+rs=${script_dir}/resolve.sh
 ri=${script_dir}/resolve-image.sh
 
 # --- resolve-profiles.sh ---------------------------------------------------
@@ -302,6 +367,54 @@ script_case "resolve-profiles invalid line" 1 '' "${rp}" 'a;b'
 script_case "resolve-profiles unknown line" 1 '' "${rp}" 99.99
 script_case "resolve-profiles wrong argument count" 1 '' "${rp}"
 
+# --- matrix.sh and resolve.sh: test targets and memory ------------------------
+
+unset HARNESS_TARGETS
+export HARNESS_TARGETS
+script_case "matrix default: every target of the line" 0 \
+	'matrix={"target":["x86-64","armsr-armv8","malta-le","malta-be"]}' "${mx}" 25.12
+script_case "matrix default on a line where a target has no image" 0 \
+	'matrix={"target":["x86-64","armsr-armv8","malta-le"]}' "${mx}" main
+HARNESS_TARGETS="malta-be x86-64"
+script_case "matrix subset keeps the order of targets.yml" 0 \
+	'matrix={"target":["x86-64","malta-be"]}' "${mx}" 25.12
+HARNESS_TARGETS="malta-le
+malta-le"
+script_case "matrix duplicates are dropped" 0 'matrix={"target":["malta-le"]}' "${mx}" 25.12
+HARNESS_TARGETS="x86-64 nope"
+script_case "matrix unknown target fails and lists the known ones" 1 '' "${mx}" 25.12
+if grep -q "unknown test target 'nope' on line 25.12 (known: x86-64 armsr-armv8 malta-le malta-be)" "${work}/err"; then
+	record "matrix unknown target message" 0 ""
+else
+	record "matrix unknown target message" 1 "${sc_err}"
+fi
+HARNESS_TARGETS="malta-be"
+script_case "matrix target without an image for the line fails" 1 '' "${mx}" main
+HARNESS_TARGETS="x86-64;id"
+script_case "matrix invalid target id prints nothing" 1 '' "${mx}" 25.12
+HARNESS_TARGETS="  "
+script_case "matrix blank targets mean all" 0 ANY "${mx}" 25.12
+unset HARNESS_TARGETS
+export HARNESS_TARGETS
+script_case "matrix invalid line" 1 '' "${mx}" 'a;b'
+
+export HARNESS_RELEASE=25.12.6
+script_case "resolve.sh uses the memory of targets.yml" 0 ANY "${rs}" 25.12 armsr-armv8
+if grep -qx 'HARNESS_MEMORY=128M' "${work}/out"; then
+	record "resolve.sh default memory is 128M" 0 ""
+else
+	record "resolve.sh default memory is 128M" 1 "${sc_out}"
+fi
+script_case "resolve.sh memory override" 0 ANY env HARNESS_MEMORY_INPUT=256M "${rs}" 25.12 armsr-armv8
+if grep -qx 'HARNESS_MEMORY=256M' "${work}/out"; then
+	record "resolve.sh applies the memory input" 0 ""
+else
+	record "resolve.sh applies the memory input" 1 "${sc_out}"
+fi
+script_case "resolve.sh invalid memory prints nothing" 1 '' env HARNESS_MEMORY_INPUT=2G "${rs}" 25.12 armsr-armv8
+script_case "resolve.sh memory below the range prints nothing" 1 '' env HARNESS_MEMORY_INPUT=32M "${rs}" 25.12 armsr-armv8
+unset HARNESS_RELEASE
+
 # --- resolve-archs.sh ------------------------------------------------------
 
 unset HARNESS_ARCHS
@@ -333,6 +446,23 @@ script_case "resolve-archs invalid token prints nothing" 1 '' "${ra}" 25.12
 HARNESS_ARCHS="@tests
 ::error::forged"
 script_case "resolve-archs forged workflow command prints nothing" 1 '' "${ra}" 25.12
+HARNESS_PROFILES=
+HARNESS_TARGETS="x86-64"
+HARNESS_ARCHS="@tests"
+export HARNESS_TARGETS
+script_case "resolve-archs @tests follows the chosen targets" 0 \
+	'matrix={"arch":["x86_64"]}
+archs=x86_64' "${ra}" 25.12
+HARNESS_PROFILES="mediatek/filogic/bananapi_bpi-r3"
+HARNESS_ARCHS="@tests @profiles"
+script_case "resolve-archs chosen targets plus the profiles" 0 \
+	'matrix={"arch":["x86_64","aarch64_cortex-a53"]}
+archs=x86_64 aarch64_cortex-a53' "${ra}" 25.12
+HARNESS_TARGETS="x86-64 nope"
+script_case "resolve-archs unknown target fails" 1 '' "${ra}" 25.12
+unset HARNESS_TARGETS
+export HARNESS_TARGETS
+HARNESS_PROFILES="mediatek/filogic/nope_board"
 HARNESS_ARCHS="@all"
 script_case "resolve-archs unknown @ token" 1 '' "${ra}" 25.12
 HARNESS_ARCHS="  "

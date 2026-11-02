@@ -48,6 +48,14 @@ on:
         type: string
         required: false
         default: "@tests @profiles"
+      targets:
+        description: >-
+          QEMU test targets whose architectures @tests stands for (same value
+          as the targets input of test.yml). Empty: all targets of
+          harness/targets.yml.
+        type: string
+        required: false
+        default: ""
       profiles:
         description: >-
           Image profiles whose architectures @profiles adds (same format as
@@ -152,6 +160,7 @@ jobs:
           LINE: ${{ inputs.line }}
           HARNESS_ARCHS: ${{ inputs.archs }}
           HARNESS_PROFILES: ${{ inputs.profiles }}
+          HARNESS_TARGETS: ${{ inputs.targets }}
         run: |
           resolved=$(ci-base/scripts/resolve-archs.sh "${LINE}")
           echo "${resolved}" | tee -a "${GITHUB_OUTPUT}"

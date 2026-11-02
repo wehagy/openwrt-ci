@@ -18,6 +18,9 @@
 #   HARNESS_ARCHS     tokens: @tests, @profiles or package architectures,
 #                     separated by spaces or newlines (default: "@tests @profiles")
 #   HARNESS_PROFILES  the profiles input, read only when @profiles is used
+#   HARNESS_TARGETS   the QEMU test targets @tests stands for (default: all
+#                     targets of targets.yml with an image for the line, as
+#                     scripts/matrix.sh)
 #   HARNESS_DIR       directory with lines.yml, images.yml and targets.yml
 #                     (default: <repo>/harness)
 
@@ -52,8 +55,11 @@ for token in ${archs_input}; do
 	check_arch_token "${token}"
 	case "${token}" in
 	@tests)
-		yq '.targets[].arch' "${targets_file}" >>"${work}/all.txt" ||
-			die "yq failed on ${targets_file}"
+		tmatrix=$("${script_dir}/matrix.sh" "${LINE}") || die "cannot resolve the test targets for @tests"
+		for tid in $(printf '%s\n' "${tmatrix}" | sed -n -e 's/^matrix=//p' | jq -r '.target[]'); do
+			TID=${tid} yq '.targets[strenv(TID)].arch' "${targets_file}" >>"${work}/all.txt" ||
+				die "yq failed on ${targets_file}"
+		done
 		;;
 	@profiles)
 		resolved=$(HARNESS_PROFILES="${HARNESS_PROFILES:-}" "${script_dir}/resolve-profiles.sh" "${LINE}") ||

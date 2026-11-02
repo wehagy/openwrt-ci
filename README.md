@@ -1,19 +1,25 @@
 # openwrt-ci
 
-Generic OpenWrt package CI: build a package with the official SDK, test it in
-QEMU and build firmware images with it using the official Image Builder.
-Upstream pull requests are planned.
+Reusable base of an OpenWrt package CI: build a package with the official SDK,
+test it in QEMU and build firmware images with it using the official Image
+Builder. This repository holds only the base (reusable workflows, scripts,
+pinned tooling, the generic package test) and its own CI, which tests the base
+with a sample package (`netbird`). The packages themselves, their
+package-specific tests and the planned upstream pull request automation live in
+[wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci-packages),
+which calls the workflows below.
 
 ## Status
 
 | Done                                                                              | Pending                                             |
 |-----------------------------------------------------------------------------------|-----------------------------------------------------|
-| SDK build (`build.yml`) on lines `25.12` and `main`, 5 architectures              | NetBird runtime tests                               |
+| SDK build (`build.yml`) on lines `25.12` and `main`, 5 architectures              | NetBird runtime tests (caller repository)           |
 | Own SDK image on GHCR, rebuilt when older than 1 day or on request                | Scheduled SDK image refresh (none today: lazy only) |
-| QEMU test (`test.yml`) on lines `25.12` and `main`, sources `feed` and `artifact` | Upstream PR automation and upstream PR testing      |
+| QEMU test (`test.yml`) on lines `25.12` and `main`, sources `feed` and `artifact` | Upstream PR automation and testing (caller repository) |
 | QEMU targets `x86-64`, `armsr-armv8`, `malta-le`, `malta-be` on both lines        |                                                     |
 | Image build (`images.yml`) on lines `25.12` and `main`, 8 profiles                |                                                     |
 | `ci.yml`: build both lines, then test each build and build its images             |                                                     |
+| Callable from another repository: `ci_ref`, `tests_path`, `test_secrets`, `sdk_container` |                              |
 
 ## Layout
 
@@ -48,7 +54,107 @@ Upstream pull requests are planned.
   - `build.yml`: reusable SDK build.
   - `test.yml`: reusable QEMU test.
   - `images.yml`: reusable Image Builder build.
-  - `ci.yml`: caller, runs on push to `feat/**`.
+  - `ci.yml`: the base's own CI, calls the three workflows above for the sample
+    package `netbird` on push to `feat/**`.
+- `scripts/` also has: `report-revisions.sh` (prints the harness and caller
+  commits of a job), `install-tests.sh` (copies the pytest files),
+  `with-test-secrets.sh` (exports the caller secrets to the tests only).
+
+## Using the base from another repository
+
+```yaml
+jobs:
+  build:
+    permissions: {contents: read, packages: write}
+    uses: wehagy/openwrt-ci/.github/workflows/build.yml@main
+    with: {line: "25.12", package: netbird, ci_ref: main}
+  test:
+    needs: build
+    uses: wehagy/openwrt-ci/.github/workflows/test.yml@main
+    with:
+      line: "25.12"
+      package: netbird
+      source: artifact
+      ci_ref: main
+      tests_path: packages/netbird/tests   # optional
+      test_secrets: NB_SETUP_KEY           # optional
+    secrets: inherit                       # only with test_secrets
+```
+
+No tags are used: the callers follow a branch (`@main`).
+
+### Self-checkout (`ci_ref`)
+
+A reusable workflow runs in the caller's context: a plain `actions/checkout`
+fetches the calling repository, so `scripts/`, `harness/` and `docker/` would be
+missing. Every job of the three workflows therefore starts with the same two
+steps: check out `wehagy/openwrt-ci` at `ci_ref` (default `main`) into
+`ci-base/`, then `ci-base/scripts/report-revisions.sh`, which prints
+
+```
+harness: wehagy/openwrt-ci ref <ci_ref> -> <sha of ci-base>
+caller: <owner>/<repo> run commit <GITHUB_SHA>
+```
+
+(and appends it to the job summary). Every script then runs as
+`ci-base/scripts/...`; the data files are found relative to the script.
+
+- `ci_ref` is an input of `build.yml`, `test.yml` and `images.yml`. A caller
+  that uses `@<ref>` must pass `ci_ref: <ref>`; the workflow file comes from
+  the `uses:` ref, the scripts from `ci_ref`, and nothing keeps them equal.
+  A branch that moves between the two reads gets mixed versions (risk).
+- `ci.yml` of this repository passes `ci_ref: ${{ github.sha }}`, so a branch
+  tests its own scripts (the local `uses: ./...` is the same commit).
+- Why a step in each job and not a composite action: a composite action must
+  be named with a fixed `uses: wehagy/openwrt-ci/...@<ref>` (no expression is
+  allowed there) before any checkout exists, so it would pin its own ref apart
+  from `ci_ref` and a branch would run the action from `main`. The cost is 11
+  copied lines in six jobs.
+- The harness repository is the `HARNESS_CI_REPOSITORY` env of each workflow
+  (`wehagy/openwrt-ci`); a fork changes it.
+
+### Package tests (`tests_path`, `test.yml`)
+
+`tests_path` is a directory of the calling repository (e.g.
+`packages/netbird/tests`). When set, only that directory is checked out
+(`sparse-checkout`, into `caller/`) and its top-level `*.py` files are copied
+to `openwrt-tests/tests/ext/` next to the generic test, so they run in the same
+pytest session and VM (`scripts/install-tests.sh`) and can import
+`harness_util` and use the fixtures of `conftest.py` (`vm_ssh`). A file named
+like a harness file (`conftest.py`, `harness_util.py`, `test_package.py`) fails
+the job. Empty input, a missing directory or no `*.py` file: only the generic
+test runs (`::notice::` in the log). The value is validated
+(`scripts/validate-inputs.sh`: relative, `[A-Za-z0-9._/-]`, no `..`).
+
+### Secrets for the tests (`test_secrets`, `test.yml`)
+
+The base names no secret. The caller passes `secrets: inherit` and lists the
+names in `test_secrets` (spaces or commas, `[A-Z][A-Z0-9_]*`, not `GITHUB_*`,
+`RUNNER_*`, `ACTIONS_*`, `HARNESS_*` or a few process names).
+
+- The step `Run tests` gets `toJSON(secrets)` and the names as env;
+  `scripts/with-test-secrets.sh` exports each named secret as an environment
+  variable of the `pytest` process only (not `GITHUB_ENV`) and removes the JSON
+  before `exec`. Values are masked by GitHub; the log shows only
+  `test-secrets: NAME is set` or `... is absent or empty`.
+- A name that is not a secret of the caller is exported empty: a test sees an
+  empty variable and can skip with a reason.
+- Why not an explicit `secrets:` entry: the base would have to declare names, or
+  one opaque `test_env` secret the caller composes. `inherit` plus a list keeps
+  the base generic and the caller in control. It requires the caller and the
+  base to be able to use `secrets: inherit` (same owner or organization).
+
+### SDK image access (`sdk_container`, `build.yml`)
+
+`sdk_container` (default `ghcr.io/wehagy/openwrt-sdk`) names the GHCR
+repository of the SDK image. Reusing a fresh image needs only a public read.
+When a run has to rebuild it, `sdk-image` pushes with the caller's
+`GITHUB_TOKEN`, which needs the package to allow that repository: GitHub >
+Packages > `openwrt-sdk` > Package settings > Manage Actions access > Add
+Repository > the calling repository, role Write (Admin to also delete the
+superseded `-prev` version). A denied push fails the job with
+`::error::push of ... denied. The GITHUB_TOKEN of <repo> needs write access to
+the package ...` after printing the registry error.
 
 ## Reusable workflow `build.yml`
 
@@ -59,8 +165,9 @@ Inputs (`line` and `package` required):
 | `line`    | OpenWrt line, a key of `harness/lines.yml` with build keys | `25.12` or `main`                     |
 | `package` | package to build, a directory of `openwrt/packages`        | `[a-z0-9][a-z0-9._+-]*`, <= 128 chars |
 
-Optional input `refresh_sdk` (boolean, default `false`): rebuild the SDK
-images of the line even when they are fresh.
+Optional inputs: `refresh_sdk` (boolean, default `false`): rebuild the SDK
+images of the line even when they are fresh; `sdk_container` (see above);
+`ci_ref` (see above).
 
 The caller must grant `packages: write` to the job that calls `build.yml`
 (`ci.yml` does); the workflow itself needs it only in `sdk-image`.
@@ -69,9 +176,10 @@ The caller must grant `packages: write` to the job that calls `build.yml`
   `aarch64_cortex-a53`, `mipsel_24kc`, `mips_24kc` (`fail-fast: false`).
   `sdk` (the build) needs `sdk-image`, which waits for all five architectures.
 - The SDK image repository is named once, by the workflow `env`
-  `HARNESS_SDK_CONTAINER` (`ghcr.io/<owner>/openwrt-sdk`, the owner of the
-  calling repository): `sdk-image` publishes it, `sdk` reads it and passes it
-  to the action as `CONTAINER`. `scripts/resolve-sdk.sh` has no default.
+  `HARNESS_SDK_CONTAINER` (the `sdk_container` input, default
+  `ghcr.io/wehagy/openwrt-sdk`): `sdk-image` publishes it, `sdk` reads it and
+  passes it to the action as `CONTAINER`. `scripts/resolve-sdk.sh` has no
+  default.
 - `scripts/resolve-build.sh` validates the inputs and reads `sdk_tag_suffix`,
   `sdk_max_age_days` and `packages_branch` from `lines.yml`.
   - Official SDK container: `docker.io/openwrt/sdk:<arch>-<sdk_tag_suffix>`.
@@ -94,7 +202,7 @@ The caller must grant `packages: write` to the job that calls `build.yml`
     swapped branch fails the job.
   - Age: read from the registry API with `curl`, without pulling: the label
     `org.opencontainers.image.created` in the image config of
-    `ghcr.io/<owner>/openwrt-sdk:<tag>`, set to the time just before
+    `<sdk_container>:<tag>`, set to the time just before
     `setup.sh` ran. An unreadable label is rebuilt, which heals it.
   - The image is pushed as one plain image manifest (`--provenance=false
     --sbom=false`): an index with attestation manifests would add untagged
@@ -106,7 +214,8 @@ The caller must grant `packages: write` to the job that calls `build.yml`
   - Retention: the superseded image is kept as `<tag>-prev` (current plus one
     previous), so a build that pinned it by digest keeps working. The
     package version that was `<tag>-prev` is deleted (`gh api -X DELETE
-    /users/<owner>/packages/container/openwrt-sdk/versions/<id>`; the version
+    /users/<owner>/packages/container/openwrt-sdk/versions/<id>`, or `/orgs/<owner>/...`
+    for an organization; the version
     whose `name` is its manifest digest). The package versions before and
     after the delete are printed in the log.
   - No `concurrency` group: GitHub cancels the older pending job of a group,
@@ -117,9 +226,10 @@ The caller must grant `packages: write` to the job that calls `build.yml`
     Runs that finish their builds together can still push twice: the last
     push holds the tag, the other image stays untagged (`warn: ... was moved
     by another run`), a leftover of about 1 GB to delete by hand.
-  - Permissions: `contents: read`, `packages: write` (the `GITHUB_TOKEN`
-    pushes and deletes). The package is linked to the repository by the label
-    `org.opencontainers.image.source`; it must be public, because `sdk` reads
+  - Permissions: `contents: read`, `packages: write` (the `GITHUB_TOKEN` of the
+    calling repository pushes and deletes; see "SDK image access"). The label
+    `org.opencontainers.image.source` names the harness repository
+    (`HARNESS_CI_REPOSITORY`); the package must be public, because `sdk` reads
     it anonymously.
 - The `sdk` job step `Pin the SDK image` (`scripts/sdk-image-info.sh`) reads
   the image anonymously and fails if it is not public or its labels are
@@ -145,8 +255,9 @@ The caller must grant `packages: write` to the job that calls `build.yml`
 
 ## Reusable workflow `test.yml`
 
-Inputs (all required, all validated by `scripts/validate-inputs.sh` before
-use; an invalid value fails the run):
+Inputs (`line`, `package`, `source` required; all validated by
+`scripts/validate-inputs.sh` before use; an invalid value fails the run).
+Optional: `tests_path`, `test_secrets` and `ci_ref` (see above).
 
 | Input     | Meaning                                    | Accepted                              |
 |-----------|--------------------------------------------|---------------------------------------|
@@ -185,8 +296,9 @@ use; an invalid value fails the run):
 
 ## Reusable workflow `images.yml`
 
-Inputs (both required, validated before use, like `build.yml`): `line` (a key
-of `harness/lines.yml`) and `package`.
+Inputs (validated before use, like `build.yml`): `line` (a key of
+`harness/lines.yml`) and `package`, both required; optional `ci_ref` (see
+above).
 
 - One job per profile of `harness/images.yml` (`fail-fast: false`), from the
   profiles and extra packages of
@@ -280,9 +392,11 @@ of `harness/lines.yml`) and `package`.
 - Artifact: `images-<package>-<line>-<profile id>` (none for a profile that is
   too big as expected).
 
-## Caller `ci.yml`
+## Own CI `ci.yml`
 
-On push to `feat/**` and on `workflow_dispatch`, for package `netbird`.
+Tests the base with the sample package `netbird`. Every call passes
+`ci_ref: ${{ github.sha }}`, the commit under test. On push to `feat/**` and on
+`workflow_dispatch`.
 Dispatch inputs: `refresh_sdk` (boolean, passed to `build.yml`) and `lines`
 (`both`, `25.12` or `main`: the other build job is skipped). Each build job
 has `packages: write`.
@@ -307,16 +421,18 @@ has `packages: write`.
 
 ## Adding a package
 
-Only what the code supports today:
+Packages are added in the calling repository
+([wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci-packages),
+`packages/<name>/`), not here. Only what the code supports today:
 
 - Build and test a package of `openwrt/packages`: call `build.yml` with `line`
   and `package`, then `test.yml` with the same `line` and `package`,
-  `source: artifact` and `needs:` the build job. `ci.yml` does this for
-  `netbird`.
+  `source: artifact` and `needs:` the build job; pass `ci_ref`.
 - Test a package of the official release feed without building it: call
   `test.yml` with `source: feed`.
 - `harness/tests/test_package.py` is generic: no per-package code or data.
-  Package-specific runtime tests do not exist yet.
+  Package-specific runtime tests are files in the caller repository, given by
+  `tests_path`; they do not exist yet.
 - Build images with the package: call `images.yml` with the same `line` and
   `package`, `needs:` the build job.
 - Packages outside `openwrt/packages` (local feeds, upstream PRs) are not

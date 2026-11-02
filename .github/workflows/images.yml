@@ -131,7 +131,7 @@ jobs:
         if: ${{ !cancelled() && env.HARNESS_IB_IMAGE != '' }}
         env:
           HARNESS_JOB_STATUS: ${{ job.status }}
-        run: scripts/image-summary.sh "${IB_OUT}" "${IMAGE_OUT}" >> "${GITHUB_STEP_SUMMARY}"
+        run: scripts/image-summary.sh "${IB_OUT}" "${IMAGE_OUT}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ env.HARNESS_OUTCOME == 'fits' }}

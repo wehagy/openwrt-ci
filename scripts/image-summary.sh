@@ -5,7 +5,7 @@
 # ImageBuilder's own messages.
 #
 # Usage:
-#   scripts/image-summary.sh <ib-out-dir> <image-dir> >> "$GITHUB_STEP_SUMMARY"
+#   scripts/image-summary.sh <ib-out-dir> <image-dir> | tee -a "$GITHUB_STEP_SUMMARY"
 #
 # Environment variables (set by scripts/resolve-image.sh,
 # scripts/pull-imagebuilder.sh, scripts/collect-images.sh and the workflow):

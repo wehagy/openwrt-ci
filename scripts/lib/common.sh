@@ -225,3 +225,49 @@ check_charset() {
 	*) ;;
 	esac
 }
+
+# Abort unless the argument is a safe relative directory of the caller
+# repository: [A-Za-z0-9._/-], no leading or trailing slash, no empty or
+# "." / ".." component. The value is never echoed (see check_package_name).
+#
+# Arguments:
+#   $1  path
+check_tests_path() {
+	case "$1" in
+	*[!A-Za-z0-9._/-]* | /* | */ | '' | *//* | . | ./* | */. | */./* | .. | ../* | */.. | */../*)
+		die "invalid tests path (allowed: a relative directory of [A-Za-z0-9._/-], no .. component)"
+		;;
+	*) ;;
+	esac
+	[ "${#1}" -le 256 ] || die "invalid tests path (longer than 256 chars)"
+}
+
+# Abort unless the argument is a list of secret names separated by spaces or
+# commas: each [A-Z][A-Z0-9_]*, at most 32 names, none of them starting with a
+# prefix the runner or the harness owns. The value is never echoed (see
+# check_package_name).
+#
+# Arguments:
+#   $1  names
+check_secret_names() {
+	csn_list=$(printf '%s' "$1" | tr ',' ' ')
+	case "${csn_list}" in
+	*[!A-Z0-9_\ ]*) die "invalid secret names (allowed: [A-Z][A-Z0-9_]* separated by spaces or commas)" ;;
+	*) ;;
+	esac
+	csn_count=0
+	for csn_name in ${csn_list}; do
+		case "${csn_name}" in
+		[A-Z]*) ;;
+		*) die "invalid secret name (must start with A-Z)" ;;
+		esac
+		case "${csn_name}" in
+		GITHUB_* | RUNNER_* | ACTIONS_* | HARNESS_* | LD_* | BASH_* | PATH | HOME | SHELL | IFS | ENV | PYTHON*)
+			die "invalid secret name (reserved prefix or name)"
+			;;
+		*) ;;
+		esac
+		csn_count=$((csn_count + 1))
+	done
+	[ "${csn_count}" -le 32 ] || die "too many secret names (at most 32)"
+}

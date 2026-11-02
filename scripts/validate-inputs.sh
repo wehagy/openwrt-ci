@@ -11,6 +11,10 @@
 #   HARNESS_PACKAGE  package name (see check_package_name in lib/common.sh)
 #   HARNESS_LINE     OpenWrt line: "main" or NN.NN (e.g. 25.12)
 #   HARNESS_SOURCE   package source: feed or artifact
+#   HARNESS_TESTS_PATH   optional; directory of the caller repository with the
+#                        package tests (see check_tests_path in lib/common.sh)
+#   HARNESS_TEST_SECRETS optional; names of the caller secrets exported to the
+#                        tests (see check_secret_names in lib/common.sh)
 
 set -eu
 
@@ -30,3 +34,11 @@ case "${source_kind}" in
 feed | artifact) ;;
 *) die "invalid source input (allowed: feed or artifact)" ;;
 esac
+
+# Optional inputs: empty means "not used".
+if [ -n "${HARNESS_TESTS_PATH:-}" ]; then
+	check_tests_path "${HARNESS_TESTS_PATH}"
+fi
+if [ -n "${HARNESS_TEST_SECRETS:-}" ]; then
+	check_secret_names "${HARNESS_TEST_SECRETS}"
+fi

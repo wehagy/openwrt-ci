@@ -18,7 +18,10 @@
 #   HARNESS_REFRESH_SDK  true to rebuild an image created before this script
 #                        started, even a fresh one (default: false)
 #   GITHUB_TOKEN         token with packages: write
-#   GITHUB_ACTOR, GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT
+#   GITHUB_ACTOR, GITHUB_REPOSITORY (the calling repository, whose token
+#   pushes), GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT
+#   HARNESS_CI_REPOSITORY  repository of the harness (owner/name), the
+#                        "source" label of the image it builds
 #   GH_TOKEN             same token, for the gh CLI (package versions API)
 #   GITHUB_STEP_SUMMARY  optional; the decision is appended to it
 
@@ -46,6 +49,7 @@ max_days=${HARNESS_SDK_MAX_AGE_DAYS:?HARNESS_SDK_MAX_AGE_DAYS is required}
 refresh=${HARNESS_REFRESH_SDK:-false}
 actor=${GITHUB_ACTOR:?GITHUB_ACTOR is required}
 repository=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}
+ci_repository=${HARNESS_CI_REPOSITORY:?HARNESS_CI_REPOSITORY is required}
 run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
 run_attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
 : "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
@@ -55,7 +59,7 @@ check_sdk_tag "${tag}"
 check_max_age_days "${max_days}"
 check_bool "${refresh}"
 [ "${image}" = "${container}:${tag}" ] || die "HARNESS_SDK_IMAGE does not match container and tag"
-case "${actor}${repository}${run_id}${run_attempt}${base_image}" in
+case "${actor}${repository}${ci_repository}${run_id}${run_attempt}${base_image}" in
 *[!A-Za-z0-9._/:-]* | '') die "invalid GitHub context or base image" ;;
 *) ;;
 esac
@@ -72,13 +76,29 @@ trap 'rm -rf "${work_dir}"' EXIT
 export GHCR_USER="${actor}"
 export GHCR_PASSWORD="${GITHUB_TOKEN}"
 
+# Set packages_api to the package path of the packages API. The API has one
+# path per owner type, /users/<owner> or /orgs/<owner>, so it is read from the
+# owner. Called by the functions that use the API, so that a reused image (a
+# public read only) makes no API call.
+packages_api=
+set_packages_api() {
+	[ -z "${packages_api}" ] || return 0
+	owner_type=$(gh api "/users/${owner}" --jq .type) || die "cannot read the owner ${owner}"
+	case "${owner_type}" in
+	User) packages_api="/users/${owner}/packages/container/${package}" ;;
+	Organization) packages_api="/orgs/${owner}/packages/container/${package}" ;;
+	*) die "unexpected owner type for ${owner}" ;;
+	esac
+}
+
 # Print the versions of the package as "id name tags created_at".
 #
 # Arguments:
 #   $1  heading
 list_versions() {
+	set_packages_api
 	printf '== package versions %s (%s)\n' "$1" "${package}"
-	gh api --paginate "/users/${owner}/packages/container/${package}/versions" \
+	gh api --paginate "${packages_api}/versions" \
 		--jq '.[] | [.id, .name, (.metadata.container.tags | join(",")), .created_at] | @tsv' ||
 		die "cannot list the package versions"
 }
@@ -89,14 +109,15 @@ list_versions() {
 # Arguments:
 #   $1  digest
 delete_version() {
-	dv_id=$(gh api --paginate "/users/${owner}/packages/container/${package}/versions" \
+	set_packages_api
+	dv_id=$(gh api --paginate "${packages_api}/versions" \
 		--jq ".[] | select(.name == \"$1\") | .id") ||
 		die "cannot look up the version of $1"
 	case "${dv_id}" in
 	'') printf 'sdk-image: version %s is already gone\n' "$1" ;;
 	*[!0-9]*) die "expected one version id for $1" ;;
 	*)
-		gh api -X DELETE "/users/${owner}/packages/container/${package}/versions/${dv_id}" ||
+		gh api -X DELETE "${packages_api}/versions/${dv_id}" ||
 			die "cannot delete the version ${dv_id}"
 		deleted="${deleted:+${deleted} }${dv_id} ($1)"
 		printf 'sdk-image: deleted version %s (%s)\n' "${dv_id}" "$1"
@@ -200,17 +221,36 @@ fi
 # attestation manifests, which the registry lists as extra package versions
 # and which ghcr_inspect rejects. --push writes one plain image manifest.
 push_meta="${work_dir}/push.json"
-docker buildx build --pull=false --provenance=false --sbom=false --push -t "${image}" \
-	--metadata-file "${push_meta}" \
-	--label "${label_created}=${created}" \
-	--label "org.opencontainers.image.source=https://github.com/${repository}" \
-	--label "org.opencontainers.image.base.name=${base_image}" \
-	--label "${label_archive}=${archive_name}" \
-	--label "${label_archive_sha}=${archive_sha}" \
-	--label "${label_run_id}=${run_id}" \
-	--label "${label_run_attempt}=${run_attempt}" - <<EOF || die "docker buildx build (labels, push) failed"
+push_err="${work_dir}/push.err"
+push_image() {
+	docker buildx build --pull=false --provenance=false --sbom=false --push -t "${image}" \
+		--metadata-file "${push_meta}" \
+		--label "${label_created}=${created}" \
+		--label "org.opencontainers.image.source=https://github.com/${ci_repository}" \
+		--label "org.opencontainers.image.base.name=${base_image}" \
+		--label "${label_archive}=${archive_name}" \
+		--label "${label_archive_sha}=${archive_sha}" \
+		--label "${label_run_id}=${run_id}" \
+		--label "${label_run_attempt}=${run_attempt}" - <<EOF
 FROM ${stage}
 EOF
+}
+# stderr goes to a file so that a denied push can be told from other failures;
+# it is printed right after.
+set +e
+push_image 2>"${push_err}"
+push_rc=$?
+set -e
+if [ "${push_rc}" -ne 0 ]; then
+	cat "${push_err}" >&2
+	if grep -qiE 'denied|forbidden|unauthori[sz]ed|insufficient_scope' "${push_err}"; then
+		printf '::error::push of %s denied. The GITHUB_TOKEN of %s needs write access to the package %s: Package settings > Manage Actions access > Add Repository > %s, role Write (Admin to also delete the superseded -prev version). The package must also be public for the build job to read it.\n' \
+			"${image}" "${repository}" "${container}" "${repository}"
+		die "cannot push ${image}: write access to the package missing for ${repository} (see the error above)"
+	fi
+	die "docker buildx build (labels, push) failed"
+fi
+cat "${push_err}" >&2
 
 # ---------------------------------------------------------------------------
 # Verify the push, keep the superseded image as <tag>-prev, delete the one

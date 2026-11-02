@@ -1,6 +1,13 @@
 # Reusable workflow: build one package for the 5 architectures of a line with
-# the official OpenWrt SDK (openwrt/gh-action-sdk, as the openwrt/packages CI
-# does) from the openwrt/packages branch of that line, and upload the .apk.
+# the OpenWrt SDK (openwrt/gh-action-sdk, as the openwrt/packages CI does) from
+# the openwrt/packages branch of that line, and upload the .apk.
+#
+# The SDK comes from the harness image ghcr.io/<owner>/openwrt-sdk:<arch>-<tag>,
+# derived from the official snapshot SDK container with setup.sh already run
+# (the SDK download from the OpenWrt mirror takes ~14 min). The `sdk-image` job
+# rebuilds it when it is missing, older than the line's sdk_max_age_days or
+# refresh_sdk is set; otherwise it is reused. The caller must grant
+# `packages: write` to the job that calls this workflow.
 name: build
 
 on:
@@ -14,12 +21,65 @@ on:
         description: Package name to build (a directory of openwrt/packages)
         type: string
         required: true
+      refresh_sdk:
+        description: Rebuild the SDK images of the line even when they are fresh
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  # One run at a time per (line, arch) image, across runs and workflows, so
+  # parallel runs never rebuild the same image at once; a waiting run then
+  # finds the image fresh and reuses it. GitHub keeps one running and one
+  # pending job per group, so a third concurrent run cancels the pending one.
+  sdk-image:
+    name: sdk-image ${{ inputs.line }} ${{ matrix.arch }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: sdk-image-${{ inputs.line }}-${{ matrix.arch }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64_generic, aarch64_cortex-a53, mipsel_24kc, mips_24kc]
+    defaults:
+      run:
+        shell: bash # adds pipefail
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      HARNESS_SDK_CONTAINER: ghcr.io/${{ github.repository_owner }}/openwrt-sdk
+      HARNESS_REFRESH_SDK: ${{ inputs.refresh_sdk }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Age rule self-test
+        run: scripts/sdk-age-selftest.sh
+
+      # Validates the inputs; the output is written to $GITHUB_ENV only when
+      # the script succeeded.
+      - name: Resolve line and arch
+        env:
+          LINE: ${{ inputs.line }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          resolved=$(scripts/resolve-sdk.sh "${LINE}" "${ARCH}")
+          echo "${resolved}" | tee -a "${GITHUB_ENV}"
+
+      - name: Reuse or rebuild the SDK image
+        run: scripts/sdk-image-ensure.sh
+
   sdk:
+    needs: sdk-image
     name: ${{ inputs.line }} ${{ matrix.arch }}
     runs-on: ubuntu-26.04
     timeout-minutes: 45
@@ -58,16 +118,22 @@ jobs:
           path: packages-feed
           persist-credentials: false
 
-      - name: Record feed commit and SDK image digest
+      # Reads the SDK image anonymously, as the build below pulls it, and
+      # fails if it is private, too old or not refreshed when it should be.
+      - name: Check the SDK image
+        env:
+          HARNESS_REFRESH_SDK: ${{ inputs.refresh_sdk }}
+        run: |
+          info=$(scripts/sdk-image-info.sh)
+          echo "${info}" | tee -a "${GITHUB_ENV}"
+
+      - name: Record feed commit and build start
         run: |
           sha=$(git -C packages-feed rev-parse HEAD)
-          digest=$(docker buildx imagetools inspect "${HARNESS_SDK_IMAGE}" \
-            --format '{{.Manifest.Digest}}')
           start=$(date +%s)
           mkdir -p "${SDK_OUT}"
           {
             echo "HARNESS_PACKAGES_SHA=${sha}"
-            echo "HARNESS_SDK_DIGEST=${digest}"
             echo "HARNESS_BUILD_START=${start}"
           } >> "${GITHUB_ENV}"
 

@@ -1,26 +1,49 @@
 # Caller: build the package for both lines, then test each build in QEMU on
-# every push to a feature branch.
+# every push to a feature branch. Can also be started by hand to force the
+# SDK images to be rebuilt (refresh_sdk) and to build only one line.
 name: ci
 
 on:
   push:
     branches: ["feat/**"]
+  workflow_dispatch:
+    inputs:
+      refresh_sdk:
+        description: Rebuild the SDK images of the selected lines even when fresh
+        type: boolean
+        default: false
+      lines:
+        description: Lines to build
+        type: choice
+        options: [both, "25.12", main]
+        default: both
 
 permissions:
   contents: read
 
 jobs:
+  # build.yml pushes the SDK images to GHCR, hence packages: write.
   build-25-12:
+    if: ${{ inputs.lines != 'main' }}
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/build.yml
     with:
       line: "25.12"
       package: netbird
+      refresh_sdk: ${{ inputs.refresh_sdk == true }}
 
   build-main:
+    if: ${{ inputs.lines != '25.12' }}
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/build.yml
     with:
       line: main
       package: netbird
+      refresh_sdk: ${{ inputs.refresh_sdk == true }}
 
   test-25-12:
     needs: build-25-12

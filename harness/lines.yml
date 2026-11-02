@@ -5,7 +5,13 @@
 # (from harness/targets.yml).
 #
 # Keys:
-#   sdk_tag_suffix           suffix of the SDK container tag
+#   sdk_tag_suffix           suffix of the SDK container tag, both of the
+#                            official container (docker.io/openwrt/sdk) and of
+#                            the harness image derived from it
+#                            (ghcr.io/<owner>/openwrt-sdk:<arch>-<suffix>)
+#   sdk_max_age_days         whole days (1-365) a harness SDK image is reused;
+#                            an older, missing or force-refreshed image is
+#                            rebuilt before the build (scripts/sdk-image-ensure.sh)
 #   packages_branch          branch of the openwrt/packages feed
 #   imagebuilder_tag_suffix  suffix of the ImageBuilder container tag
 #                            (not read yet; keep it)
@@ -27,13 +33,14 @@
 #   image_base_url           directory holding the images and sha256sums
 #   feed_base_url            apk feed (index.json and *.apk)
 #
-# The build workflow reads sdk_tag_suffix and packages_branch; the QEMU test
-# workflow reads the other keys. Each line has the keys of its release_source
-# only.
+# The build workflow reads sdk_tag_suffix, sdk_max_age_days and
+# packages_branch; the QEMU test workflow reads the other keys. Each line has
+# the keys of its release_source only.
 
 lines:
   "25.12":
     sdk_tag_suffix: openwrt-25.12
+    sdk_max_age_days: 1
     packages_branch: openwrt-25.12
     imagebuilder_tag_suffix: openwrt-25.12
     release_source: releases
@@ -43,6 +50,7 @@ lines:
     feed_base_url: https://downloads.openwrt.org/releases/{release}/packages/{arch}/packages
   main:
     sdk_tag_suffix: main
+    sdk_max_age_days: 1
     packages_branch: master
     imagebuilder_tag_suffix: main
     release_source: snapshot

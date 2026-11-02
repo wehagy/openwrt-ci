@@ -8,7 +8,7 @@
 #
 # Environment variables (all set by scripts/resolve.sh and the fetch scripts):
 #   HARNESS_LINE, HARNESS_TARGET, HARNESS_RELEASE, HARNESS_KVM, HARNESS_MEMORY,
-#   HARNESS_IMAGE_URL, HARNESS_IMAGE_SHA256, HARNESS_PACKAGE,
+#   HARNESS_IMAGE_URL, HARNESS_IMAGE_SHA256, HARNESS_IMAGE_DATE, HARNESS_PACKAGE,
 #   HARNESS_PACKAGE_VERSION
 
 set -eu
@@ -25,6 +25,7 @@ kvm=${HARNESS_KVM:?HARNESS_KVM is required}
 memory=${HARNESS_MEMORY:?HARNESS_MEMORY is required}
 image_url=${HARNESS_IMAGE_URL:?HARNESS_IMAGE_URL is required}
 image_sha256=${HARNESS_IMAGE_SHA256:?HARNESS_IMAGE_SHA256 is required}
+image_date=${HARNESS_IMAGE_DATE:?HARNESS_IMAGE_DATE is required}
 package=${HARNESS_PACKAGE:?HARNESS_PACKAGE is required}
 package_version=${HARNESS_PACKAGE_VERSION:?HARNESS_PACKAGE_VERSION is required}
 
@@ -42,6 +43,7 @@ printf -- '- target: %s, kvm: %s, memory: %s\n' \
 	"${target}" "${kvm}" "${memory}"
 printf -- '- image: %s\n' "${image_url}"
 printf -- '- image sha256: %s\n' "${image_sha256}"
+printf -- '- image date (Last-Modified): %s\n' "${image_date}"
 printf -- '- package: %s %s\n' "${package}" "${package_version}"
 printf -- '- pytest exit: %s, total: %s s\n' "${pytest_rc}" "${total}"
 

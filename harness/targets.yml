@@ -4,10 +4,13 @@
 #   lg_env    target file in aparcar/openwrt-tests/targets/
 #   arch      package architecture of the official apk feed
 #   path      target path below the release directory
-#   memory    VM memory (armsr-armv8 and malta-le run from RAM and need 256M)
+#   memory    VM memory (armsr-armv8 and the malta targets run from RAM and
+#             need 256M)
 #   kvm       true when the runner offers /dev/kvm for this guest architecture
 #   qemu_pkg  apt package providing the qemu-system binary
-#   images    image file name per line; {release} is expanded
+#   images    image file name per line; {release} is expanded. A line that is
+#             absent here is not tested on the target (explicit gaps are
+#             commented in place)
 
 targets:
   x86-64:
@@ -19,6 +22,7 @@ targets:
     qemu_pkg: qemu-system-x86
     images:
       "25.12": openwrt-{release}-x86-64-generic-squashfs-combined.img.gz
+      main: openwrt-x86-64-generic-squashfs-combined.img.gz
   armsr-armv8:
     lg_env: qemu_armsr-armv8.yaml
     arch: aarch64_generic
@@ -28,6 +32,7 @@ targets:
     qemu_pkg: qemu-system-arm
     images:
       "25.12": openwrt-{release}-armsr-armv8-generic-initramfs-kernel.bin
+      main: openwrt-armsr-armv8-generic-initramfs-kernel.bin
   malta-le:
     lg_env: qemu_malta-le.yaml
     arch: mipsel_24kc
@@ -37,3 +42,14 @@ targets:
     qemu_pkg: qemu-system-mips
     images:
       "25.12": openwrt-{release}-malta-le-vmlinux-initramfs.elf
+      main: openwrt-malta-le-generic-initramfs-kernel.bin
+  malta-be:
+    lg_env: qemu_malta-be.yaml
+    arch: mips_24kc
+    path: malta/be
+    memory: 256M
+    kvm: false
+    qemu_pkg: qemu-system-mips
+    images:
+      "25.12": openwrt-{release}-malta-be-vmlinux-initramfs.elf
+      main: openwrt-malta-be-generic-initramfs-kernel.bin

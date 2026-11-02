@@ -64,6 +64,33 @@ check_apk_version() {
 	esac
 }
 
+# Abort unless the argument is a valid release or snapshot version, e.g.
+# 25.12.6 or r37969-5799d2da76. The value is never echoed (see
+# check_package_name).
+#
+# Arguments:
+#   $1  release
+check_release() {
+	case "$1" in
+	*[!A-Za-z0-9._+-]* | [!A-Za-z0-9]* | '') die "invalid release (allowed: [A-Za-z0-9][A-Za-z0-9._+-]*)" ;;
+	*) ;;
+	esac
+	[ "${#1}" -le 64 ] || die "invalid release (longer than 64 chars)"
+}
+
+# Abort unless the argument is an HTTP date such as
+# "Sun, 01 Nov 2026 06:55:28 GMT". The value is never echoed (see
+# check_package_name).
+#
+# Arguments:
+#   $1  HTTP date
+check_http_date() {
+	case "$1" in
+	*[!A-Za-z0-9,:\ ]* | '') die "invalid HTTP date (allowed: [A-Za-z0-9,: ]+)" ;;
+	*) ;;
+	esac
+}
+
 # Print the path of the one <package>-<version>.apk below a directory; no
 # match or several matches are an error (e.g. netbird-ui must not count).
 #

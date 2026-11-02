@@ -1,4 +1,4 @@
-# Reusable workflow: boot official OpenWrt images in QEMU (aparcar/openwrt-tests)
+# Reusable workflow: boot official OpenWrt images (release or snapshot) in QEMU (aparcar/openwrt-tests)
 # and run the generic package test of harness/tests against one package.
 name: test
 

@@ -1,5 +1,5 @@
-# Caller: build the package for both lines, then test the 25.12 build in QEMU
-# on every push to a feature branch.
+# Caller: build the package for both lines, then test each build in QEMU on
+# every push to a feature branch.
 name: ci
 
 on:
@@ -22,11 +22,19 @@ jobs:
       line: main
       package: netbird
 
-  # Line main is only built: it has no QEMU images until slice P1b adds them.
   test-25-12:
     needs: build-25-12
     uses: ./.github/workflows/test.yml
     with:
       line: "25.12"
+      package: netbird
+      source: artifact
+
+  # Snapshot images of line main, with the package built from the main SDK.
+  test-main:
+    needs: build-main
+    uses: ./.github/workflows/test.yml
+    with:
+      line: main
       package: netbird
       source: artifact

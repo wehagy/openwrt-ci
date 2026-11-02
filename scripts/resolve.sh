@@ -33,27 +33,12 @@ work_dir=$(mktemp -d)
 trap 'rm -rf "${work_dir}"' EXIT
 
 # ---------------------------------------------------------------------------
-# Release: latest non-rc release of the line, unless pinned.
-# ---------------------------------------------------------------------------
-release=${HARNESS_RELEASE:-}
-if [ -z "${release}" ]; then
-	index_url=$(yq_get "${lines_file}" "${line_key}.releases_index_url")
-	release_regex=$(yq_get "${lines_file}" "${line_key}.release_regex")
-	curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 -o "${work_dir}/index.html" "${index_url}" ||
-		die "cannot fetch ${index_url}"
-	grep -oE "href=\"${release_regex}/\"" "${work_dir}/index.html" \
-		>"${work_dir}/hrefs" || die "no release ${release_regex} at ${index_url}"
-	sed -e 's/^href="//' -e 's|/"$||' "${work_dir}/hrefs" >"${work_dir}/versions"
-	sort -V -o "${work_dir}/sorted" "${work_dir}/versions"
-	release=$(tail -n 1 "${work_dir}/sorted")
-fi
-
-# ---------------------------------------------------------------------------
-# Target data and URLs.
+# Target data and placeholder expansion.
 # ---------------------------------------------------------------------------
 arch=$(yq_get "${targets_file}" "${target_key}.arch")
 path=$(yq_get "${targets_file}" "${target_key}.path")
 image_pattern=$(yq_get "${targets_file}" "${target_key}.images[strenv(LINE)]")
+release=${HARNESS_RELEASE:-}
 
 # Expand the {release}, {path} and {arch} placeholders of a pattern.
 #
@@ -64,6 +49,44 @@ expand() {
 		-e "s|{path}|${path}|g" -e "s|{arch}|${arch}|g"
 }
 
+# ---------------------------------------------------------------------------
+# Release: unless pinned, the latest non-rc release of the line ("releases")
+# or the snapshot build version ("snapshot").
+# ---------------------------------------------------------------------------
+if [ -z "${release}" ]; then
+	release_source=$(yq_get "${lines_file}" "${line_key}.release_source")
+	case "${release_source}" in
+	releases)
+		index_url=$(yq_get "${lines_file}" "${line_key}.releases_index_url")
+		release_regex=$(yq_get "${lines_file}" "${line_key}.release_regex")
+		curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 -o "${work_dir}/index.html" "${index_url}" ||
+			die "cannot fetch ${index_url}"
+		grep -oE "href=\"${release_regex}/\"" "${work_dir}/index.html" \
+			>"${work_dir}/hrefs" || die "no release ${release_regex} at ${index_url}"
+		sed -e 's/^href="//' -e 's|/"$||' "${work_dir}/hrefs" >"${work_dir}/versions"
+		sort -V -o "${work_dir}/sorted" "${work_dir}/versions"
+		release=$(tail -n 1 "${work_dir}/sorted")
+		;;
+	snapshot)
+		version_pattern=$(yq_get "${lines_file}" "${line_key}.snapshot_version_url")
+		version_url=$(expand "${version_pattern}")
+		curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 -o "${work_dir}/version.buildinfo" "${version_url}" ||
+			die "cannot fetch ${version_url}"
+		read -r release <"${work_dir}/version.buildinfo" ||
+			die "cannot read a version from ${version_url}"
+		;;
+	*)
+		die "unsupported release_source in ${lines_file}: ${release_source}"
+		;;
+	esac
+fi
+# The release goes to GITHUB_ENV and into URLs: keep it to a safe charset
+# whatever its origin (pin, index page, remote file).
+check_release "${release}"
+
+# ---------------------------------------------------------------------------
+# URLs.
+# ---------------------------------------------------------------------------
 image_file=$(expand "${image_pattern}")
 image_base_pattern=$(yq_get "${lines_file}" "${line_key}.image_base_url")
 image_base=$(expand "${image_base_pattern}")

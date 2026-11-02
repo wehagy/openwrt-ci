@@ -9,20 +9,32 @@
 #   packages_branch          branch of the openwrt/packages feed
 #   imagebuilder_tag_suffix  suffix of the ImageBuilder container tag
 #                            (not read yet; keep it)
-#   releases_index_url       HTML directory listing scanned for releases
-#   release_regex            ERE of release directory names; the highest
-#                            version (sort -V) wins, so -rcN never matches
+#   release_source           "releases": the latest release of the line is
+#                            found in releases_index_url; "snapshot": the
+#                            line has no releases and the version is the
+#                            content of snapshot_version_url
+#   releases_index_url       (releases) HTML directory listing scanned for
+#                            releases
+#   release_regex            (releases) ERE of release directory names; the
+#                            highest version (sort -V) wins, so -rcN never
+#                            matches
+#   snapshot_version_url     (snapshot) version.buildinfo of the target
+#                            directory, e.g. r37969-5799d2da76; snapshot
+#                            images are rebuilt daily, so it identifies the
+#                            image set the run used
 #   image_base_url           directory holding the images and sha256sums
-#   feed_base_url            official apk feed (index.json and *.apk)
+#   feed_base_url            apk feed (index.json and *.apk)
 #
 # The build workflow reads sdk_tag_suffix and packages_branch; the QEMU test
-# workflow reads the last four keys.
+# workflow reads the other keys. Each line has the keys of its release_source
+# only.
 
 lines:
   "25.12":
     sdk_tag_suffix: openwrt-25.12
     packages_branch: openwrt-25.12
     imagebuilder_tag_suffix: openwrt-25.12
+    release_source: releases
     releases_index_url: https://downloads.openwrt.org/releases/
     release_regex: '25\.12\.[0-9]+'
     image_base_url: https://downloads.openwrt.org/releases/{release}/targets/{path}
@@ -31,6 +43,7 @@ lines:
     sdk_tag_suffix: main
     packages_branch: master
     imagebuilder_tag_suffix: main
-    # releases_index_url, release_regex, image_base_url and feed_base_url are
-    # absent on purpose: slice P1b adds them with the snapshot QEMU images.
-    # Until then scripts/resolve.sh fails for this line (missing key).
+    release_source: snapshot
+    snapshot_version_url: https://downloads.openwrt.org/snapshots/targets/{path}/version.buildinfo
+    image_base_url: https://downloads.openwrt.org/snapshots/targets/{path}
+    feed_base_url: https://downloads.openwrt.org/snapshots/packages/{arch}/packages

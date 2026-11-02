@@ -1,6 +1,7 @@
 #!/usr/bin/env sh
 # Responsibility: download an OpenWrt image, verify it against the release
-# sha256sums, unpack it to firmware.img and print its checksum.
+# sha256sums, unpack it to firmware.img and print its checksum and the date
+# the server reports for it (Last-Modified; snapshot images are rebuilt daily).
 #
 # Usage:
 #   scripts/fetch-image.sh >> "$GITHUB_ENV"
@@ -22,8 +23,16 @@ sums_url=${HARNESS_SHA256SUMS_URL:?HARNESS_SHA256SUMS_URL is required}
 work_dir=${HARNESS_WORK_DIR:-.}
 image_file=${image_url##*/}
 
-curl -fsSL --retry 3 --connect-timeout 20 --max-time 600 -o "${work_dir}/${image_file}" "${image_url}" ||
+curl -fsSL --retry 3 --connect-timeout 20 --max-time 600 -D "${work_dir}/headers" \
+	-o "${work_dir}/${image_file}" "${image_url}" ||
 	die "cannot fetch ${image_url}"
+# -D records every response of a redirect chain; the last Last-Modified is the
+# one of the file. Header names are case-insensitive.
+awk -F': ' 'tolower($1) == "last-modified" { sub(/\r$/, "", $2); date = $2 } END { print date }' \
+	"${work_dir}/headers" >"${work_dir}/last-modified"
+read -r last_modified <"${work_dir}/last-modified" ||
+	die "no Last-Modified header for ${image_url}"
+check_http_date "${last_modified}"
 curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 -o "${work_dir}/sha256sums" "${sums_url}" ||
 	die "cannot fetch ${sums_url}"
 
@@ -51,5 +60,6 @@ case "${image_file}" in
 esac
 
 printf 'HARNESS_IMAGE_SHA256=%s\n' "${actual}"
+printf 'HARNESS_IMAGE_DATE=%s\n' "${last_modified}"
 work_abs=$(cd "${work_dir}" && pwd)
 printf 'HARNESS_FIRMWARE=%s/firmware.img\n' "${work_abs}"

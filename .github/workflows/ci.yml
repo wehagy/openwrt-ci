@@ -48,6 +48,14 @@ on:
         type: choice
         options: [all, build]
         default: all
+      profiles:
+        description: Image profiles, <target>/<subtarget>/<profile>[:too-big] (default - x86/64/generic of harness/images.yml)
+        type: string
+        default: ""
+      packages:
+        description: Packages added to the images, -name removes (default - none; the CI uses "-dnsmasq dnsmasq-full")
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -67,6 +75,7 @@ jobs:
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
       feed_repository: ${{ inputs.feed_repository }}
       feed_ref: ${{ inputs.feed_ref }}
+      profiles: ${{ inputs.profiles }}
 
   build-main:
     if: ${{ inputs.lines != '25.12' }}
@@ -81,6 +90,7 @@ jobs:
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
       feed_repository: ${{ inputs.feed_repository }}
       feed_ref: ${{ inputs.feed_ref }}
+      profiles: ${{ inputs.profiles }}
 
   test-25-12:
     if: ${{ inputs.stages != 'build' }}
@@ -117,6 +127,8 @@ jobs:
       ci_ref: ${{ github.sha }}
       line: "25.12"
       package: ${{ inputs.package || 'netbird' }}
+      profiles: ${{ inputs.profiles }}
+      packages: ${{ inputs.packages || '-dnsmasq dnsmasq-full' }}
 
   image-main:
     if: ${{ inputs.stages != 'build' }}
@@ -126,6 +138,8 @@ jobs:
       ci_ref: ${{ github.sha }}
       line: main
       package: ${{ inputs.package || 'netbird' }}
+      profiles: ${{ inputs.profiles }}
+      packages: ${{ inputs.packages || '-dnsmasq dnsmasq-full' }}
 
   # What the callers of build.yml read: the feed outputs of the builds.
   feed-report:

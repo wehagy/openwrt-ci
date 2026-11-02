@@ -71,6 +71,25 @@ which calls the workflows below.
 - `harness/sample-tests/`: caller tests of this repository, used by `ci.yml`
   (see "Package tests").
 
+## Trust model
+
+- Untrusted feed code (the `openwrt/packages` tree, or the repository of
+  `feed_repository`) runs only in the `sdk` job of `build.yml`, inside the SDK
+  container, with `permissions: contents: read` and no secrets. The container
+  receives only the variables listed in the `--env` flags of the `docker run`
+  of `openwrt/gh-action-sdk` (none of `ACTIONS_RUNTIME_TOKEN`,
+  `ACTIONS_CACHE_URL`, `GITHUB_TOKEN`).
+- The caller secrets (`test_secrets`) exist only in the `test.yml` job, and
+  reach only the pytest process.
+- No shared caches: no job of `build.yml`, `test.yml` or `images.yml` uses
+  `actions/cache`. `setup-uv` in `test.yml` runs with `enable-cache: false`, so
+  the job that holds secrets neither restores nor saves an Actions cache.
+- Known residue: `openwrt/gh-action-sdk` (composite action, pinned) enables
+  the caches of `docker/setup-qemu-action`, `docker/setup-buildx-action` and of
+  the `docker/build-push-action` build (`type=gha`) in the `sdk` job. No job
+  with secrets restores those keys; to remove them, replace the action by
+  inline steps that build `docker/sdk-image` without a cache.
+
 ## Using the base from another repository
 
 ```yaml

@@ -12,6 +12,9 @@
 # ships only setup.sh (HARNESS_IB_SETUP=true: the ImageBuilder is downloaded when
 # the container runs).
 #
+# HARNESS_EXPECT is "too-big" for a profile declared with `expect: too-big` in
+# images.yml (its image is known not to fit the flash), otherwise "fits".
+#
 # Usage:
 #   scripts/resolve-image.sh <line> <profile-id> <package> >> "$GITHUB_ENV"
 #
@@ -49,12 +52,17 @@ profile=$(yq_get "${images_file}" "${profile_key}.profile")
 arch=$(yq_get "${images_file}" "${profile_key}.arch")
 extra_packages=$(yq_get "${images_file}" '.extra_packages')
 image_globs=$(yq_get "${images_file}" '.image_globs')
+expect=$(yq_get_or "${images_file}" "${profile_key}.expect" fits)
 release_source=$(yq_get "${lines_file}" "${line_key}.release_source")
 
 check_charset "target" "${target}" '[!a-z0-9]'
 check_charset "subtarget" "${subtarget}" '[!a-z0-9]'
 check_charset "profile" "${profile}" '[!A-Za-z0-9_-]'
 check_charset "arch" "${arch}" '[!a-z0-9_-]'
+case "${expect}" in
+fits | too-big) ;;
+*) die "invalid expect of profile ${PROFILE_ID} (allowed: too-big, or no key)" ;;
+esac
 check_charset "image_globs" "${image_globs}" '[!A-Za-z0-9*._ -]'
 for extra in ${extra_packages}; do
 	check_package_name "${extra}"
@@ -85,3 +93,4 @@ printf 'HARNESS_TARGET_PATH=%s/%s\n' "${target}" "${subtarget}"
 printf 'HARNESS_IB_IMAGE=%s:%s-%s-%s\n' "${container}" "${target}" "${subtarget}" "${tag_suffix}"
 printf 'HARNESS_IB_SETUP=%s\n' "${setup}"
 printf 'HARNESS_IMAGE_GLOBS=%s\n' "${image_globs}"
+printf 'HARNESS_EXPECT=%s\n' "${expect}"

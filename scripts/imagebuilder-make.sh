@@ -5,9 +5,13 @@
 # .apk needs no signature override: the ImageBuilder indexes its packages/
 # directory itself and signs that index with its local key.
 #
-# The ImageBuilder fails or keeps going when an image does not fit the flash:
-# check-size only prints "WARNING: Image file ... is too big" and deletes the
-# image, so that message is turned into a failure here.
+# An image that does not fit the flash is not a make failure: check-size only
+# prints "WARNING: Image file ... is too big: <size> > <limit>" and deletes
+# the image (some images are refused earlier by the tool that packs them, e.g.
+# "file-system partition too big"). Whether that is expected is decided by
+# scripts/check-image-outcome.sh on the host from make.log; here only the size
+# of the root filesystem is recorded, because the messages do not always state
+# the size of the image (rootfs-bytes).
 #
 # Usage:
 #   sh /harness/scripts/imagebuilder-make.sh
@@ -73,10 +77,10 @@ printf '%s\n' "$((end - start))" >"${out_dir}/make-seconds"
 read -r status <"${make_rc}"
 [ "${status}" -eq 0 ] || die "make image failed with status ${status}"
 
-# check-size turns "too big" into a WARNING and deletes the image.
-if grep -E 'WARNING: Image file .* is too big' "${make_log}"; then
-	die "an image of profile ${profile} does not fit the flash (ImageBuilder message above)"
-fi
+# Size of the root filesystem the ImageBuilder packed, for the cases where the
+# "too big" message has no image size. Not an error when none is found.
+find build_dir -type f -name root.squashfs -exec stat -c %s {} + \
+	>"${out_dir}/rootfs-bytes" || die "cannot size the root filesystem"
 
 cp -R "bin/targets/${target_path}/." "${out_dir}/" ||
 	die "cannot copy bin/targets/${target_path}"

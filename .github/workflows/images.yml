@@ -115,7 +115,16 @@ jobs:
             --volume "${IB_OUT}:/harness/out" \
             "${HARNESS_IB_IMAGE}" sh /harness/scripts/imagebuilder-make.sh
 
+      # Passes only when the result is the declared one (expect: in
+      # harness/images.yml): an image that fits, or the Image Builder's "too
+      # big" for a profile expected not to fit.
+      - name: Check the Image Builder outcome
+        run: scripts/check-image-outcome.sh "${IB_OUT}" | tee -a "${GITHUB_ENV}"
+
+      # An image that does not fit was deleted by the Image Builder: nothing
+      # to check or keep (the summary has the sizes and the messages).
       - name: Check the manifest and collect the images
+        if: ${{ env.HARNESS_OUTCOME == 'fits' }}
         run: scripts/collect-images.sh "${IB_OUT}" "${IMAGE_OUT}" | tee -a "${GITHUB_ENV}"
 
       - name: Summary
@@ -125,6 +134,7 @@ jobs:
         run: scripts/image-summary.sh "${IB_OUT}" "${IMAGE_OUT}" >> "${GITHUB_STEP_SUMMARY}"
 
       - uses: actions/upload-artifact@v7.0.2
+        if: ${{ env.HARNESS_OUTCOME == 'fits' }}
         with:
           name: images-${{ env.HARNESS_PACKAGE }}-${{ inputs.line }}-${{ matrix.profile }}
           path: ${{ env.IMAGE_OUT }}

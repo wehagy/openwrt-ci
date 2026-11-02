@@ -26,6 +26,20 @@ yq_get() {
 	printf '%s\n' "${yq_value}"
 }
 
+# Print the value of a yq expression, or a default when the key is missing.
+#
+# Arguments:
+#   $1  YAML file
+#   $2  yq expression (keys come from exported variables via strenv())
+#   $3  default
+yq_get_or() {
+	yq_value=$(yq "$2" "$1") || die "yq failed on $1: $2"
+	if [ "${yq_value}" = null ]; then
+		yq_value=$3
+	fi
+	printf '%s\n' "${yq_value}"
+}
+
 # Abort unless the argument is a valid package name: [a-z0-9][a-z0-9._+-]*,
 # at most 128 chars. The value is never echoed: a newline or a "::" prefix
 # could otherwise forge workflow commands in the log.

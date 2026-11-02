@@ -13,8 +13,18 @@
 #   profile            ImageBuilder PROFILE
 #   arch               package architecture: the built package comes from the
 #                      artifact apk-<package>-<line>-<arch> of build.yml
+#   expect             optional; only "too-big" is accepted. The image of this
+#                      profile is known not to fit the flash with the package:
+#                      the job is green only when the Image Builder reports
+#                      "too big" (sizes and message in the job summary) and
+#                      fails if the image fits ("now fits": remove the key) or
+#                      anything else goes wrong. Without the key the image must
+#                      fit.
 #
-# Profiles and extra packages are those of wehagy/owpib.
+# The first six profiles and the extra packages are those of
+# wehagy/owpib; the 16 MB flash ones are expected too big. The last two have
+# 32 MB of flash and show whether the package fits a 32 MB device (limits:
+# IMAGE_SIZE of the device in openwrt/openwrt, see README).
 
 extra_packages: luci-app-attendedsysupgrade luci-app-uhttpd luci-ssl owut
 
@@ -46,8 +56,10 @@ profiles:
     subtarget: generic
     profile: tplink_archer-c7-v4
     arch: mips_24kc
+    expect: too-big
   totolink-x5000r:
     target: ramips
     subtarget: mt7621
     profile: totolink_x5000r
     arch: mipsel_24kc
+    expect: too-big

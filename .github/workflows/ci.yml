@@ -4,6 +4,10 @@
 # (refresh_sdk) and to build only one line. Packages of their own live in
 # wehagy/openwrt-ci-packages, which calls the same workflows.
 #
+# test-* also exercise the caller side of test.yml against this repository:
+# tests_path (harness/sample-tests, real checks of what the tests receive) and
+# test_secrets (SAMPLE_SECRET, not defined here: it must arrive exported empty).
+#
 # ci_ref is the commit under test: the called workflows check the scripts out
 # of that commit (not of main), so a branch tests its own scripts.
 name: ci
@@ -60,6 +64,9 @@ jobs:
       line: "25.12"
       package: netbird
       source: artifact
+      tests_path: harness/sample-tests
+      test_secrets: SAMPLE_SECRET
+    secrets: inherit
 
   # Snapshot images of line main, with the package built from the main SDK.
   test-main:
@@ -70,6 +77,9 @@ jobs:
       line: main
       package: netbird
       source: artifact
+      tests_path: harness/sample-tests
+      test_secrets: SAMPLE_SECRET
+    secrets: inherit
 
   image-25-12:
     needs: build-25-12

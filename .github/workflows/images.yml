@@ -69,6 +69,11 @@ jobs:
       - name: Outcome check self-test
         run: ci-base/scripts/image-outcome-selftest.sh
 
+      # A fake setup.sh: the retry of a sha256 mismatch of the Image Builder
+      # archive (snapshot published file by file) is bounded and fail-closed.
+      - name: Image Builder setup self-test
+        run: ci-base/scripts/ib-setup-selftest.sh
+
       - name: Validate inputs
         env:
           HARNESS_LINE: ${{ inputs.line }}

@@ -21,7 +21,8 @@
 #   HARNESS_PACKAGES      packages to install, space separated (required)
 #   HARNESS_TARGET_PATH   <target>/<subtarget> (required)
 #   HARNESS_IB_SETUP      true: download the ImageBuilder with ./setup.sh
-#                         first (snapshot tags); false: it is in the image
+#                         first (snapshot tags; scripts/ib-setup.sh retries a
+#                         sha256 mismatch); false: it is in the image
 #   HARNESS_APK_DIR       directory with the built .apk (default: /harness/in)
 #   HARNESS_PACKAGE       package name, to find its .apk (required)
 #   HARNESS_OUT_DIR       writable output directory (default: /harness/out)
@@ -49,7 +50,9 @@ setup_seconds=0
 case "${setup}" in
 true)
 	start=$(date +%s)
-	TARGET=${target_path} ./setup.sh
+	# Repeats setup.sh when the mirror serves an archive that does not match
+	# the sha256sums (see scripts/ib-setup.sh); any other failure is final.
+	TARGET=${target_path} "${script_dir}/ib-setup.sh"
 	end=$(date +%s)
 	setup_seconds=$((end - start))
 	;;

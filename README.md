@@ -34,6 +34,7 @@ which calls the workflows below.
     architecture), extra packages and the globs of the files kept as artifacts.
   - `targets.yml`: per-QEMU-target data (`x86-64`, `armsr-armv8`, `malta-le`,
     `malta-be`) and the image name per line.
+  - `selftests/`: pytest tests of the harness helpers (no VM).
   - `tests/`: pytest tests run inside the VMs through
     [aparcar/openwrt-tests](https://github.com/aparcar/openwrt-tests).
   - `openwrt-tests.uv.lock`: pinned Python environment of those tests.
@@ -45,7 +46,8 @@ which calls the workflows below.
     `resolve.sh`, `fetch-image.sh`, `fetch-package.sh`, `prepare-target.sh`,
     `run-tests.sh`, `summary.sh`.
   - Images: `image-matrix.sh`, `resolve-image.sh`, `pull-imagebuilder.sh`,
-    `imagebuilder-make.sh` (runs inside the Image Builder container),
+    `imagebuilder-make.sh` (runs inside the Image Builder container) with
+    `ib-setup.sh` and `ib-setup-selftest.sh`,
     `check-image-outcome.sh`, `collect-images.sh`, `image-summary.sh`.
   - `lib/common.sh`: shared helpers. `lib/ghcr.sh` (registry reads),
     `lib/sdk-age.sh` (age rule and reuse/rebuild decision),
@@ -169,7 +171,10 @@ Names that change how a process behaves are refused: `GITHUB_*`, `RUNNER_*`,
   `test_no_ancestor_keeps_the_secrets_json`, which read `/proc/<pid>/environ`
   of every ancestor). It is hygiene against accidental exposure, not
   isolation: the tests are code of the calling repository, whose own workflow
-  can read all its secrets anyway.
+  can read all its secrets anyway. The runner process (`Runner.Worker`) keeps
+  the secrets in its memory, because it builds the step environment and masks
+  the log; nothing here changes that, and a process with `ptrace` or root can
+  read them.
 - A name that is not a secret of the caller is exported empty: a test sees an
   empty variable and can skip with a reason. Without `secrets: inherit`,
   `toJSON(secrets)` holds only `github_token` (measured: keys
@@ -189,7 +194,8 @@ Names that change how a process behaves are refused: `GITHUB_*`, `RUNNER_*`,
 repository of the SDK image. Reusing a fresh image needs only a public read.
 When a run has to rebuild it, `sdk-image` pushes with the caller's
 `GITHUB_TOKEN`, which needs the package to allow that repository: GitHub >
-Packages > `openwrt-sdk` > Package settings > Manage Actions access > Add
+Packages > the package named by `sdk_container` (`openwrt-sdk` by default) >
+Package settings > Manage Actions access > Add
 Repository > the calling repository, role Write (Admin to also delete the
 superseded `-prev` version). A denied push fails the job with
 `::error::push of ... denied. The GITHUB_TOKEN of <repo> needs write access to
@@ -265,9 +271,10 @@ The caller must grant `packages: write` to the job that calls `build.yml`
   - Retention: the superseded image is kept as `<tag>-prev` (current plus one
     previous), so a build that pinned it by digest keeps working. The
     package version that was `<tag>-prev` is deleted (`gh api -X DELETE
-    /users/<owner>/packages/container/openwrt-sdk/versions/<id>`, or `/orgs/<owner>/...`
-    for an organization; the version
-    whose `name` is its manifest digest). The package versions before and
+    /users/<owner>/packages/container/<name>/versions/<id>`, or `/orgs/<owner>/...`
+    for an organization; `<name>` is the last component of `sdk_container`,
+    `openwrt-sdk` by default; the version whose `name` is its manifest
+    digest). The package versions before and
     after the delete are printed in the log.
   - No `concurrency` group: GitHub cancels the older pending job of a group,
     which would cancel the build of a run when 3 runs (or several packages
@@ -339,6 +346,24 @@ Optional: `tests_path`, `test_secrets` and `ci_ref` (see above).
   `*-initramfs-kernel.bin`; `malta-le`/`malta-be` on `25.12` boot
   `*-vmlinux-initramfs.elf`; `armsr-armv8` and `malta-*` run from RAM with
   256 MB.
+- Network of the VM (`harness/tests/conftest.py`): the session waits for a
+  default route and an A record, then runs `apk update` up to 5 times, 5 s
+  apart. On `malta-le` and `malta-be` (where the test creates the `wan`
+  interface) one of the parallel fetches of the first `apk update` failed with
+  `wget: Failed to send request: Operation not permitted` while the other
+  repositories succeeded, a different repository each time (runs
+  41427983225, 41360955048); route and DNS were already up, and the cause
+  inside the VM was not proven. Each failed attempt is logged as a
+  `harness` warning with the output of `apk update`; after the last one the
+  session fails with the output of all attempts.
+- Timeouts in the VM: queries are bounded at 30 s; the `apk` commands of
+  `test_package.py` (`apk info -L`, `apk info -e`, `apk list -I`) at 120 s,
+  because `apk info -L` right after the install took 0.5 to 15 s in healthy
+  runs and once more than 30 s (`TimeoutExpired`, run 41437522326, job
+  125258840649, `x86-64` on `main`, then 128 MB). `x86-64` has 256 MB like the
+  other targets; that memory pressure is the cause is not proven.
+- `harness/selftests/` (step "Harness helpers self-test" of `test.yml`) tests
+  the retry helpers with a stub in place of the VM.
 - Tests: install, `apk` reports the expected version, and every `/etc/init.d`
   script the package installs is a procd script whose instances all stay
   running with constant pids for 10 s. The service test is skipped only when
@@ -391,6 +416,21 @@ above).
     that ships only `setup.sh`; the container downloads the Image Builder from
     `downloads.openwrt.org` when it starts (timed as "setup.sh" in the
     summary). Risk: that mirror gave ~330 KB/s from runners for the SDK.
+  - The snapshot directory is published file by file. In runs 41427929552
+    and 41427983225 (`ath79/generic`) `setup.sh` failed after an 8-15 minute
+    download with `sha256sum: WARNING: 1 computed checksum did NOT match`:
+    the `sha256sums` it got was signed on the day before and listed
+    `c732955d...`, while the archive had been republished at 10:33:36 and the
+    `sha256sums` only at 10:38:33 (`Last-Modified` read afterwards; the
+    same archive then matched in run 41446811960). `scripts/ib-setup.sh`
+    (called by `imagebuilder-make.sh`) therefore runs `setup.sh` again, up to
+    3 times with 120 s between them, when and only when its output has the
+    checksum mismatch; each retry prints `warn: image builder archive did not
+    match sha256sums (attempt N of 3), retrying in 120 s`, and any other
+    failure, or a mismatch in all attempts, fails the job. A retry fetches
+    `sha256sums` again and restores the keys that `setup.sh` deletes.
+    `scripts/ib-setup-selftest.sh` (step "Image Builder setup self-test" of
+    the `profiles` job) runs it against a fake `setup.sh`.
 - The `.apk` of `apk-<package>-<line>-<arch>` is copied to the Image Builder
   `packages/` directory. It is unsigned and needs no signature override: the
   Image Builder (`CONFIG_SIGNATURE_CHECK=y`) indexes `packages/` itself with

@@ -80,6 +80,10 @@ The caller must grant `packages: write` to the job that calls `build.yml`
     `org.opencontainers.image.created` in the image config of
     `ghcr.io/<owner>/openwrt-sdk:<tag>`, set to the time just before
     `setup.sh` ran.
+  - The image is pushed as one plain image manifest (`--provenance=false
+    --sbom=false`): an index with attestation manifests would add untagged
+    package versions that the delete of the superseded version would leave
+    behind, and `lib/ghcr.sh` rejects an index.
   - Missing image, age over `sdk_max_age_days` (1 day for both lines) or
     `refresh_sdk`: pull the official container, run `setup.sh` in
     `docker build`, add labels, `docker push`, then delete the superseded

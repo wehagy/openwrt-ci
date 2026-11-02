@@ -27,8 +27,10 @@ network that works.
       a missing file). The route and the name resolve already, so the wait
       above cannot see it; the cause inside the VM was not proven. `apk
       update` only refreshes the indexes, so it is repeated a bounded number
-      of times; every failed attempt is logged and the last failure fails
-      the session with the output of all attempts.
+      of times, but only when stderr has that error; any other failure
+      (signature, 404, ...) fails at once. Every repeat is logged and noted
+      in the job summary; the final failure fails the session with the
+      output of all attempts made.
 """
 
 import re

@@ -10,6 +10,9 @@ POLL_INTERVAL = 2.0
 LOG = logging.getLogger("harness")
 APK_UPDATE_ATTEMPTS = 5
 APK_UPDATE_DELAY = 5
+# stderr of the lost fetch (log of malta-le, job 125011711905; busybox wget
+# prints it without a space after "wget").
+APK_UPDATE_TRANSIENT = "Failed to send request: Operation not permitted"
 
 
 def env(name):
@@ -44,20 +47,27 @@ def poll(check, timeout_s, interval_s=POLL_INTERVAL, stable_s=0.0):
         time.sleep(interval_s)
 
 
-def retry(attempt, attempts, delay_s, what, sleep=time.sleep):
+def retry(attempt, attempts, delay_s, what, sleep=None, transient=None, on_retry=None):
     """Call attempt() until it reports success, at most `attempts` times.
 
     attempt returns (ok, detail). Every failed attempt except the last is
     logged as a warning with its detail, so a flake that a retry absorbed
-    stays visible in the job log; after the last one the failure is the
-    caller's to report. Returns (ok, details), one detail per attempt made.
+    stays visible in the job log; on_retry(what, number, attempts, delay_s),
+    if given, is called as well (the job summary). If transient is given, a
+    failure whose detail it rejects is final: it is not repeated. After the
+    last failure the report is the caller's to make. `sleep` defaults to
+    time.sleep, looked up at the call. Returns (ok, details), one detail per
+    attempt made.
     """
+    sleep = time.sleep if sleep is None else sleep
     details = []
     for number in range(1, attempts + 1):
         ok, detail = attempt()
         details.append(detail)
         if ok:
             return True, details
+        if transient is not None and not transient(detail):
+            return False, details
         if number < attempts:
             LOG.warning(
                 "%s failed (attempt %d of %d), retrying in %s s: %s",
@@ -67,8 +77,32 @@ def retry(attempt, attempts, delay_s, what, sleep=time.sleep):
                 delay_s,
                 detail,
             )
+            if on_retry is not None:
+                on_retry(what, number, attempts, delay_s)
             sleep(delay_s)
     return False, details
+
+
+def summary_note(what, number, attempts, delay_s):
+    """Append a retry notice to the job summary, if there is one.
+
+    The `harness` warning is only in the raw log; this puts an absorbed flake
+    where the job summary is read. GITHUB_STEP_SUMMARY is unset outside CI.
+    """
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    with open(path, "a", encoding="utf-8") as summary:
+        summary.write(
+            f"- :warning: `{what}` failed (attempt {number} of {attempts}) and was"
+            f" repeated after {delay_s} s; its output is in the log (`harness`"
+            " warning)\n"
+        )
+
+
+def lost_fetch(detail):
+    """True if an `apk update` failure is the lost fetch seen in CI."""
+    return APK_UPDATE_TRANSIENT in detail
 
 
 def apk_update(
@@ -76,22 +110,37 @@ def apk_update(
     timeout,
     attempts=APK_UPDATE_ATTEMPTS,
     delay_s=APK_UPDATE_DELAY,
-    sleep=time.sleep,
+    sleep=None,
 ):
-    """Run `apk update` in the VM, repeated on failure.
+    """Run `apk update` in the VM, repeated only when a fetch was lost.
 
     The first `apk update` after the network came up can lose one of its
-    parallel fetches with `wget: Failed to send request: Operation not
-    permitted` (see conftest.py, F3); the command only refreshes indexes, so
-    repeating it is safe. After the last failed attempt the assertion carries
-    the output of every attempt.
+    parallel fetches: stderr has `wget: Failed to send request: Operation not
+    permitted` and stdout `1 unavailable, 0 stale` (see conftest.py, F3). Only
+    that error is repeated (the command only refreshes indexes, so it is
+    safe); any other failure (signature, 404, ...) is final at once, because
+    `unavailable` alone is also what a missing file prints. After the last
+    failed attempt, or at a final one, the assertion carries the output of
+    every attempt made.
     """
 
     def once():
         out, err, rc = vm_ssh.run("apk update", timeout=timeout)
         return rc == 0, f"rc={rc}; stdout: {out}; stderr: {err}"
 
-    ok, details = retry(once, attempts, delay_s, "apk update", sleep=sleep)
-    assert ok, f"apk update failed in each of {attempts} attempts:\n" + "\n".join(
+    ok, details = retry(
+        once,
+        attempts,
+        delay_s,
+        "apk update",
+        sleep=sleep,
+        transient=lost_fetch,
+        on_retry=summary_note,
+    )
+    if len(details) == attempts:
+        outcome = f"in each of {attempts} attempts"
+    else:
+        outcome = f"on attempt {len(details)} (not a lost fetch, not repeated)"
+    assert ok, f"apk update failed {outcome}:\n" + "\n".join(
         f"  attempt {n}: {d}" for n, d in enumerate(details, 1)
     )

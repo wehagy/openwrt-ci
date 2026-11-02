@@ -11,7 +11,9 @@
 #                            (ghcr.io/<owner>/openwrt-sdk:<arch>-<suffix>)
 #   sdk_max_age_days         whole days (1-365) a harness SDK image is reused;
 #                            an older, missing or force-refreshed image is
-#                            rebuilt before the build (scripts/sdk-image-ensure.sh)
+#                            rebuilt before the build (scripts/sdk-image-ensure.sh,
+#                            rule in scripts/lib/sdk-age.sh); the build pins
+#                            the image by digest and does not re-apply it
 #   packages_branch          branch of the openwrt/packages feed
 #   imagebuilder_tag_suffix  suffix of the ImageBuilder container tag
 #                            (not read yet; keep it)

@@ -34,7 +34,8 @@ in QEMU. Image builds and upstream pull requests are planned.
   - Test: `validate-inputs.sh`, `matrix.sh`, `resolve.sh`, `fetch-image.sh`,
     `fetch-package.sh`, `prepare-target.sh`, `summary.sh`.
   - `lib/common.sh`: shared helpers. `lib/ghcr.sh` (registry reads),
-    `lib/sdk-age.sh` (age rule), `lib/sdk-labels.sh` (image label keys).
+    `lib/sdk-age.sh` (age rule and reuse/rebuild decision),
+    `lib/sdk-labels.sh` (image label keys).
 - `docker/sdk-image/Dockerfile`: derives the SDK image from the official one.
 - `.github/workflows/`
   - `build.yml`: reusable SDK build.
@@ -59,6 +60,10 @@ The caller must grant `packages: write` to the job that calls `build.yml`
 - Two jobs, each one per architecture: `x86_64`, `aarch64_generic`,
   `aarch64_cortex-a53`, `mipsel_24kc`, `mips_24kc` (`fail-fast: false`).
   `sdk` (the build) needs `sdk-image`, which waits for all five architectures.
+- The SDK image repository is named once, by the workflow `env`
+  `HARNESS_SDK_CONTAINER` (`ghcr.io/<owner>/openwrt-sdk`, the owner of the
+  calling repository): `sdk-image` publishes it, `sdk` reads it and passes it
+  to the action as `CONTAINER`. `scripts/resolve-sdk.sh` has no default.
 - `scripts/resolve-build.sh` validates the inputs and reads `sdk_tag_suffix`,
   `sdk_max_age_days` and `packages_branch` from `lines.yml`.
   - Official SDK container: `docker.io/openwrt/sdk:<arch>-<sdk_tag_suffix>`.
@@ -74,44 +79,57 @@ The caller must grant `packages: write` to the job that calls `build.yml`
 - Job `sdk-image` (`scripts/sdk-image-ensure.sh`), lazy refresh per (line,
   arch):
   - Starts with `scripts/sdk-age-selftest.sh`: fixed timestamps prove the age
-    rule (fresh up to and including `sdk_max_age_days`, stale after, a future
-    creation time is stale), so a wrong comparison fails the job.
+    rule and `sdk_decide`, the one function that chooses `reuse` or
+    `rebuild` (missing, unreadable creation time, created before the
+    `refresh_sdk` request, stale, fresh up to and including
+    `sdk_max_age_days`, created in the future), so a wrong comparison or a
+    swapped branch fails the job.
   - Age: read from the registry API with `curl`, without pulling: the label
     `org.opencontainers.image.created` in the image config of
     `ghcr.io/<owner>/openwrt-sdk:<tag>`, set to the time just before
-    `setup.sh` ran.
+    `setup.sh` ran. An unreadable label is rebuilt, which heals it.
   - The image is pushed as one plain image manifest (`--provenance=false
     --sbom=false`): an index with attestation manifests would add untagged
-    package versions that the delete of the superseded version would leave
-    behind, and `lib/ghcr.sh` rejects an index.
+    package versions that the delete of an old version would leave behind,
+    and `lib/ghcr.sh` rejects an index.
   - Missing image, age over `sdk_max_age_days` (1 day for both lines) or
     `refresh_sdk`: pull the official container, run `setup.sh` in
-    `docker build`, add labels, `docker push`, then delete the superseded
-    package version (`gh api -X DELETE
+    `docker build`, add labels, `docker buildx build --push`.
+  - Retention: the superseded image is kept as `<tag>-prev` (current plus one
+    previous), so a build that pinned it by digest keeps working. The
+    package version that was `<tag>-prev` is deleted (`gh api -X DELETE
     /users/<owner>/packages/container/openwrt-sdk/versions/<id>`; the version
-    whose `name` is the old manifest digest). The package versions after the push
-    (old one still listed, untagged) and after the delete are printed in the log. Otherwise the image is reused untouched.
-  - `concurrency: sdk-image-<line>-<arch>` (no cancel): runs never rebuild the
-    same image at once; a run that waited finds the image fresh. GitHub keeps
-    one running and one pending job per group, so a third concurrent run
-    cancels the pending one and its build is skipped (rare: a rebuild happens
-    about once a day).
+    whose `name` is its manifest digest). The package versions before and
+    after the delete are printed in the log.
+  - No `concurrency` group: GitHub cancels the older pending job of a group,
+    which would cancel the build of a run when 3 runs (or several packages
+    of one line) need the same rebuild. Instead the decision is made again
+    after the local build, just before the push; a run that finds a fresh
+    image pushed meanwhile discards its build (`another run pushed ...`).
+    Runs that finish their builds together can still push twice: the last
+    push holds the tag, the other image stays untagged (`warn: ... was moved
+    by another run`), a leftover of about 1 GB to delete by hand.
   - Permissions: `contents: read`, `packages: write` (the `GITHUB_TOKEN`
     pushes and deletes). The package is linked to the repository by the label
     `org.opencontainers.image.source`; it must be public, because `sdk` reads
     it anonymously.
-- The `sdk` job step `Check the SDK image` (`scripts/sdk-image-info.sh`) reads
-  the image anonymously and fails if it is not public, older than the maximum
-  age, or not rebuilt by this run when `refresh_sdk` was set. It records
-  digest, creation time, SDK archive and its sha256, and `reused` or
-  `rebuilt` (the image labels carry the run id and attempt that built it).
+- The `sdk` job step `Pin the SDK image` (`scripts/sdk-image-info.sh`) reads
+  the image anonymously and fails if it is not public or its labels are
+  invalid. It does not apply the age rule again: `sdk-image` decided it for
+  this run, so an image reused at 23 h 55 min does not fail a build that
+  starts after 24 h. It records `<tag>@<digest>` (`HARNESS_SDK_PIN`), digest,
+  creation time, SDK archive and its sha256, and `reused` or `rebuilt` (the
+  image labels carry the run id and attempt that built it).
+  `openwrt/gh-action-sdk` builds `FROM $CONTAINER:$ARCH` with `ARCH` set to
+  the pin, so the build reads exactly the digest of the summary even if
+  another run moves the tag meanwhile.
 - The full `openwrt/packages` tree is checked out (Go packages include
   `lang/golang` by relative path), then built with `openwrt/gh-action-sdk`
   pinned to commit `f5813d30`.
 - `scripts/collect-apk.sh` takes the one `<package>-<version>.apk` of the SDK
   output (none or several fail the job).
 - The job summary (`scripts/build-summary.sh`) lists line, arch, SDK image and
-  digest, its state (`reused` or `rebuilt`), creation date, SDK archive and
+  digest and pin, its state (`reused` or `rebuilt`), creation date, SDK archive and
   sha256, `openwrt/packages` branch and commit, package version and build
   duration. The `sdk-image` job summary records the decision and, for a
   rebuild, the deleted version.

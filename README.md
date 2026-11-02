@@ -12,7 +12,7 @@ Upstream pull requests are planned.
 | Own SDK image on GHCR, rebuilt when older than 1 day or on request                | Scheduled SDK image refresh (none today: lazy only) |
 | QEMU test (`test.yml`) on lines `25.12` and `main`, sources `feed` and `artifact` | Upstream PR automation and upstream PR testing      |
 | QEMU targets `x86-64`, `armsr-armv8`, `malta-le`, `malta-be` on both lines        |                                                     |
-| Image build (`images.yml`) on lines `25.12` and `main`, 6 profiles                |                                                     |
+| Image build (`images.yml`) on lines `25.12` and `main`, 8 profiles                |                                                     |
 | `ci.yml`: build both lines, then test each build and build its images             |                                                     |
 
 ## Layout
@@ -39,7 +39,7 @@ Upstream pull requests are planned.
     `fetch-package.sh`, `prepare-target.sh`, `summary.sh`.
   - Images: `image-matrix.sh`, `resolve-image.sh`, `pull-imagebuilder.sh`,
     `imagebuilder-make.sh` (runs inside the Image Builder container),
-    `collect-images.sh`, `image-summary.sh`.
+    `check-image-outcome.sh`, `collect-images.sh`, `image-summary.sh`.
   - `lib/common.sh`: shared helpers. `lib/ghcr.sh` (registry reads),
     `lib/sdk-age.sh` (age rule and reuse/rebuild decision),
     `lib/sdk-labels.sh` (image label keys).
@@ -202,6 +202,22 @@ of `harness/lines.yml`) and `package`.
   | `bananapi-bpi-r3`                   | `mediatek/filogic` | `bananapi_bpi-r3`                   | `aarch64_cortex-a53` |
   | `tplink-archer-c7-v4`               | `ath79/generic`    | `tplink_archer-c7-v4`               | `mips_24kc`          |
   | `totolink-x5000r`                   | `ramips/mt7621`    | `totolink_x5000r`                   | `mipsel_24kc`        |
+  | `glinet-gl-mt1300`                  | `ramips/mt7621`    | `glinet_gl-mt1300`                  | `mipsel_24kc`        |
+  | `buffalo-wzr-hp-g450h`              | `ath79/generic`    | `buffalo_wzr-hp-g450h`              | `mips_24kc`          |
+
+  The last two are 32 MB flash devices added to learn whether the package
+  fits a 32 MB device. Both have a size check in the image build
+  (`Build/check-size`, `include/image-commands.mk`) against the firmware
+  partition, tag `v25.12.6` of `openwrt/openwrt`:
+
+  | Profile                | `IMAGE_SIZE`                                    | Flash layout                                                                                                                                       |
+  |------------------------|-------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
+  | `glinet_gl-mt1300`     | `32448k` (`ramips/image/mt7621.mk:1563`)        | one SPI NOR; partitions `u-boot` ... `firmware` `0x50000` + `0x1fb0000` = `0x2000000` (`ramips/dts/mt7621_glinet_gl-mt1300.dts:121`)             |
+  | `buffalo_wzr-hp-g450h` | `32256k` (`ath79/image/generic.mk:729`)         | two SPI NOR chips concatenated (`ath79/dts/ar7242_buffalo_wzr-bhr.dtsi:61-63`); `firmware` `0x60000` + `0x1f80000` (`...wzr-bhr.dtsi:89-90`)      |
+
+  A profile with `expect: too-big` in `harness/images.yml` is an expected
+  failure (see below); the two 32 MB profiles have none unless their image was
+  measured too big.
 
 - Image Builder: `docker.io/openwrt/imagebuilder:<target>-<subtarget>-<tag>`
   (`scripts/resolve-image.sh`).
@@ -219,16 +235,30 @@ of `harness/lines.yml`) and `package`.
 - `scripts/collect-images.sh` requires the line `<package> - <version>` in
   `*.manifest` (version of the built `.apk`), then keeps the files matching
   `image_globs` plus the manifest and `sha256sums`.
-- An image that does not fit the flash: the Image Builder only prints
-  `WARNING: Image file ... is too big: <size> > <limit>` and deletes the image
-  (`Build/check-size`), so `scripts/imagebuilder-make.sh` fails the job on that
-  message. No profile is excluded: a profile that cannot hold the package shows
-  as a failed job with the message quoted in its summary.
+- An image that does not fit the flash: the Image Builder does not fail, it
+  only prints `WARNING: Image file ... is too big: <size> > <limit>` and
+  deletes the image (`Build/check-size`); `tplink-safeloader` refuses earlier
+  with `file-system partition too big (more than <limit> bytes)` and the
+  warning then has no size. `scripts/check-image-outcome.sh` compares that
+  result with the profile's `expect` key of `harness/images.yml`:
+
+  | `expect`          | Image builds | Image too big                                  |
+  |-------------------|--------------|------------------------------------------------|
+  | absent (default)  | job green    | job fails, message and sizes quoted            |
+  | `too-big`         | job fails: "now fits", remove the key | job green, no artifact |
+
+  `tplink-archer-c7-v4` and `totolink-x5000r` (16 MB flash) are `expect:
+  too-big`. The summary of such a job quotes the Image Builder messages with
+  the actual and limit bytes (for the TP-Link, the root filesystem against its
+  partition, because the warning has no size). Any other failure (make error,
+  missing package, wrong manifest) fails the job in both cases.
 - The job summary (`scripts/image-summary.sh`) lists profile, Image Builder
   image and digest, size and pull time, `setup.sh` and `make image` durations,
-  the manifest check, every artifact file with size and sha256 and, on
-  failure, the Image Builder messages of `make.log`.
-- Artifact: `images-<package>-<line>-<profile id>`.
+  the expectation and outcome, the manifest check, every artifact file with
+  size and sha256 and, on failure or expected failure, the Image Builder
+  messages of `make.log`.
+- Artifact: `images-<package>-<line>-<profile id>` (none for a profile that is
+  too big as expected).
 
 ## Caller `ci.yml`
 

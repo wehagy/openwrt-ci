@@ -29,6 +29,10 @@ from harness_util import env, poll
 CMD_TIMEOUT = 600
 # Queries and poll samples are short; a hung ssh must not outlive a deadline.
 QUERY_TIMEOUT = 30
+# apk commands in the VM right after the install: `apk info -L` took 0.5 to
+# 15 s in healthy runs and over 30 s once (run 41437522326, job 125258840649,
+# x86-64 on main with 128 MB), so the 30 s query bound is too tight for them.
+APK_TIMEOUT = 120
 SERVICE_TIMEOUT = 60
 # procd reports an instance running right after the fork, before a missing
 # binary makes exec fail; only a state that holds counts.
@@ -64,7 +68,7 @@ def _init_scripts(vm_ssh, package):
     line. The header is required, so a changed output format or a failed
     listing fails the test instead of looking like a package without scripts.
     """
-    out, err, rc = vm_ssh.run(f"apk info -L {package}", timeout=QUERY_TIMEOUT)
+    out, err, rc = vm_ssh.run(f"apk info -L {package}", timeout=APK_TIMEOUT)
     assert rc == 0, f"apk info -L {package} failed with {rc}: {err}"
     lines = [line.strip() for line in out if line.strip()]
     header = re.compile(rf"^{re.escape(package)}-\S+ contains:$")
@@ -128,10 +132,10 @@ def test_install_package(install):
 
 
 def test_package_is_installed(install, vm_ssh, package, record_property):
-    _, _, rc = vm_ssh.run(f"apk info -e {package}", timeout=QUERY_TIMEOUT)
+    _, _, rc = vm_ssh.run(f"apk info -e {package}", timeout=APK_TIMEOUT)
     assert rc == 0, f"apk info -e {package} failed with {rc}"
 
-    out, _, rc = vm_ssh.run(f"apk list -I {package}", timeout=QUERY_TIMEOUT)
+    out, _, rc = vm_ssh.run(f"apk list -I {package}", timeout=APK_TIMEOUT)
     assert rc == 0, f"apk list -I {package} failed with {rc}"
     # `apk list -I <glob>` may list several packages; pick the exact name:
     # "<package>-<version>" where the version starts with a digit.

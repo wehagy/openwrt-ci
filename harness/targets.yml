@@ -5,7 +5,10 @@
 #   arch      package architecture of the official apk feed
 #   path      target path below the release directory
 #   memory    VM memory (armsr-armv8 and the malta targets run from RAM and
-#             need 256M)
+#             need 256M; x86-64 has 256M too: with 128M `apk info -L` took
+#             up to 15 s after the install and once over 30 s, run
+#             41437522326 job 125258840649, likely memory pressure of the
+#             package's service in the VM - not proven)
 #   kvm       true when the runner offers /dev/kvm for this guest architecture
 #   qemu_pkg  apt package providing the qemu-system binary
 #   images    image file name per line; {release} is expanded. A line that is
@@ -17,7 +20,7 @@ targets:
     lg_env: qemu_x86-64.yaml
     arch: x86_64
     path: x86/64
-    memory: 128M
+    memory: 256M
     kvm: true
     qemu_pkg: qemu-system-x86
     images:

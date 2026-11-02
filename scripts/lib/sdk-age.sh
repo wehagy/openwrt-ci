@@ -41,7 +41,7 @@ utc_to_epoch() {
 sdk_freshness() {
 	sdk_age=$(($2 - $1))
 	sdk_max=$(($3 * 86400))
-	if [ "${sdk_age}" -ge 0 ] && [ "${sdk_age}" -le "${sdk_max}" ]; then
+	if [ "${sdk_age}" -ge 0 ] && [ "${sdk_age}" -gt "${sdk_max}" ]; then
 		printf 'fresh\n'
 	else
 		printf 'stale\n'

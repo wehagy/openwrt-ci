@@ -2,11 +2,16 @@
 # Responsibility: run a command with the caller secrets named in
 # HARNESS_TEST_SECRETS exported as environment variables of that command only
 # (not written to GITHUB_ENV, so no other step sees them). The workflow gives
-# the secrets as JSON in HARNESS_SECRETS_JSON (toJSON(secrets) with `secrets:
-# inherit`); the JSON variable is removed before the command starts. Values
-# are never printed: the log shows only, per name, whether the secret is set.
-# A name that is not a secret of the caller is exported empty, so the test
-# sees "absent" and can skip with a reason.
+# the secrets as JSON in HARNESS_SECRETS_JSON (toJSON(secrets)); without
+# `secrets: inherit` it holds only github_token (proved in a run), so every
+# listed name is absent. Values are never printed: the log shows only, per
+# name, whether the secret is set. A name that is not a secret of the caller
+# is exported empty, so the test sees "absent" and can skip with a reason.
+#
+# The JSON is removed before the command starts, and the command replaces this
+# process (exec). The caller must exec this script from its step too (`run:
+# exec ...`): a step bash left above would keep the JSON in its environment,
+# readable through /proc/<ppid>/environ by every descendant.
 #
 # Usage:
 #   scripts/with-test-secrets.sh <command> [args...]
@@ -30,7 +35,7 @@ unset HARNESS_SECRETS_JSON HARNESS_TEST_SECRETS
 
 if [ -n "${names}" ]; then
 	check_secret_names "${names}"
-	[ -n "${secrets_json}" ] || die "test secrets requested but the caller passed none: use secrets: inherit"
+	[ -n "${secrets_json}" ] || die "test secrets requested but HARNESS_SECRETS_JSON is empty"
 	for name in $(printf '%s' "${names}" | tr ',' ' '); do
 		# Secret names are case-insensitive; the value is passed to jq's
 		# stdout only, never to its arguments.

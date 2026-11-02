@@ -1,0 +1,33 @@
+# TEMPORARY: delete the whole openwrt-sdk package so the next run is cold.
+name: tmp-cleanup
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Versions before
+        run: |
+          gh api --paginate "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/openwrt-sdk/versions" \
+            --jq '.[] | [.id, .name, (.metadata.container.tags | join(",")), .created_at] | @tsv'
+      - name: Delete the package
+        run: |
+          gh api -X DELETE "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/openwrt-sdk"
+      - name: Package after
+        run: |
+          if gh api "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/openwrt-sdk"; then
+            echo "package still exists"
+            exit 1
+          fi
+          echo "package gone"

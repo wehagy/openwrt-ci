@@ -100,7 +100,7 @@ while [ "${i}" -lt 200 ]; do
 done
 validator_case check_feed_ref accept "${ref200}" "200 chars"
 validator_case check_feed_ref reject "${ref200}a" "201 chars"
-for r in '' - -x --upload-pack=x -- ../x a/../b a.. .. . .x a/.x a/ /a a//b a. \
+for r in '' - -x --upload-pack=x -- ../x a/../b a..b a...b a.. .. . .x a/.x a/ /a a//b a. \
 	x.lock a/x.lock 'a b' 'a;b' "a\$(id)" "a\`id\`" 'a*' 'a?' 'a[b' 'a~b' 'a^b' \
 	'a:b' 'a\b' 'a@{b' 'é' \
 	refs/x refs/heads/master refs/tags/v1 refs/pull/1/merge refs/pull/head \

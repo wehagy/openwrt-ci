@@ -65,7 +65,7 @@ make_rc=${out_dir}/make.rc
 start=$(date +%s)
 {
 	rc=0
-	make image PROFILE="${profile}" PACKAGES="${packages}" 2>&1 || rc=$?
+	make image PROFILE="${profile}" PACKAGES="${packages% *}" 2>&1 || rc=$?
 	echo "${rc}" >"${make_rc}"
 } | tee "${make_log}"
 end=$(date +%s)

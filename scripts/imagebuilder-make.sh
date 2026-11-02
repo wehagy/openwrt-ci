@@ -22,7 +22,8 @@
 #   HARNESS_TARGET_PATH   <target>/<subtarget> (required)
 #   HARNESS_IB_SETUP      true: download the ImageBuilder with ./setup.sh
 #                         first (snapshot tags; scripts/ib-setup.sh retries a
-#                         sha256 mismatch); false: it is in the image
+#                         sha256 mismatch within HARNESS_IB_SETUP_BUDGET);
+#                         false: it is in the image
 #   HARNESS_APK_DIR       directory with the built .apk (default: /harness/in)
 #   HARNESS_PACKAGE       package name, to find its .apk (required)
 #   HARNESS_OUT_DIR       writable output directory (default: /harness/out)

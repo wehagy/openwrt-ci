@@ -15,7 +15,14 @@
 #
 # Fail-closed: every attempt is verified by setup.sh itself; any other failure
 # (network, signature, no matching file) is not retried; a mismatch that
-# persists for all attempts fails the job. Each retry prints a `warn:` line.
+# persists for all attempts fails the job. Each retry prints a `warn:` line and
+# a `::warning::` annotation, so an absorbed flake shows in the run summary.
+#
+# Time budget: the job has a timeout (images.yml, 90 min) and one attempt can
+# take close to an hour on a slow mirror (3235 s for bananapi). A retry starts
+# only if the time used so far, the wait and the longest attempt so far still
+# fit in HARNESS_IB_SETUP_BUDGET; otherwise the job fails at once with that
+# message instead of being killed by the timeout in the middle of a retry.
 #
 # setup.sh deletes the keys directory after importing it and leaves its
 # partial downloads in the working directory, so before a retry the keys are
@@ -30,6 +37,9 @@
 #   HARNESS_IB_SETUP_WAIT      seconds to wait before a retry, 0 to 900
 #                              (default: 120; the mirror finishes publishing
 #                              sha256sums minutes after the archive)
+#   HARNESS_IB_SETUP_BUDGET    seconds the whole run may take, 1 to 86400
+#                              (default: 3000; the job timeout is 5400 s and
+#                              the rest of the job needs the difference)
 #   HARNESS_IB_SETUP_CMD       the command to run (default: ./setup.sh)
 #   HARNESS_IB_KEYS_DIR        keys directory setup.sh consumes
 #                              (default: /builder/keys)
@@ -44,6 +54,7 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 
 attempts=${HARNESS_IB_SETUP_ATTEMPTS:-3}
 wait_seconds=${HARNESS_IB_SETUP_WAIT:-120}
+budget=${HARNESS_IB_SETUP_BUDGET:-3000}
 setup_cmd=${HARNESS_IB_SETUP_CMD:-./setup.sh}
 keys_dir=${HARNESS_IB_KEYS_DIR:-/builder/keys}
 
@@ -58,6 +69,13 @@ esac
 [ "${wait_seconds}" -le 900 ] ||
 	die "HARNESS_IB_SETUP_WAIT must be 0 to 900, got '${wait_seconds}'"
 
+case "${budget}" in
+'' | *[!0-9]* | ??????*) die "HARNESS_IB_SETUP_BUDGET must be 1 to 86400, got '${budget}'" ;;
+*) ;;
+esac
+{ [ "${budget}" -ge 1 ] && [ "${budget}" -le 86400 ]; } ||
+	die "HARNESS_IB_SETUP_BUDGET must be 1 to 86400, got '${budget}'"
+
 work=$(mktemp -d) || die "cannot create a temporary directory"
 trap 'rm -rf "${work}"' EXIT
 log=${work}/setup.log
@@ -69,7 +87,10 @@ if [ -d "${keys_dir}" ]; then
 fi
 
 attempt=1
+longest=0
+started=$(date +%s)
 while :; do
+	attempt_started=$(date +%s)
 	rm -f "${status_file}"
 	{
 		"${setup_cmd}" 2>&1 || echo "$?" >"${status_file}"
@@ -88,7 +109,15 @@ while :; do
 	fi
 	[ "${attempt}" -lt "${attempts}" ] ||
 		die "image builder archive did not match sha256sums in each of ${attempts} attempts"
+	now=$(date +%s)
+	[ $((now - attempt_started)) -le "${longest}" ] || longest=$((now - attempt_started))
+	used=$((now - started))
+	need=$((wait_seconds + longest))
+	[ $((used + need)) -le "${budget}" ] ||
+		die "image builder archive did not match sha256sums (attempt ${attempt} of ${attempts}), not retrying: ${used} s used, a retry needs about ${need} s, budget ${budget} s"
 	printf 'warn: image builder archive did not match sha256sums (attempt %s of %s), retrying in %s s\n' \
+		"${attempt}" "${attempts}" "${wait_seconds}" >&2
+	printf '::warning title=Image Builder setup retried::archive did not match sha256sums (attempt %s of %s), retried after %s s\n' \
 		"${attempt}" "${attempts}" "${wait_seconds}" >&2
 	rm -f sha256sums sha256sums.asc sha256sums_min ./*.tar.*
 	if [ -d "${work}/keys" ] && [ ! -d "${keys_dir}" ]; then

@@ -70,7 +70,7 @@ jobs:
         run: ci-base/scripts/image-outcome-selftest.sh
 
       # A fake setup.sh: the retry of a sha256 mismatch of the Image Builder
-      # archive (snapshot published file by file) is bounded and fail-closed.
+      # archive (snapshot published file by file) is bounded by attempts and by time, and fail-closed.
       - name: Image Builder setup self-test
         run: ci-base/scripts/ib-setup-selftest.sh
 
@@ -97,6 +97,8 @@ jobs:
     needs: profiles
     name: ${{ inputs.line }} ${{ matrix.profile }}
     runs-on: ubuntu-26.04
+    # 5400 s. scripts/ib-setup.sh retries only within HARNESS_IB_SETUP_BUDGET
+    # (3000 s by default), so a retry never runs into this timeout.
     timeout-minutes: 90
     strategy:
       fail-fast: false

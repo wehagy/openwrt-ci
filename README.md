@@ -144,6 +144,10 @@ names in `test_secrets` (spaces or commas, `[A-Z][A-Z0-9_]*`, not `GITHUB_*`,
   the base generic and the caller in control. It requires the caller and the
   base to be able to use `secrets: inherit` (same owner or organization).
 
+- Limit: the env block of the `Run tests` step prints `toJSON(secrets)`, so the
+  log shows the names of all secrets the caller passed (`"NAME": "***"`), never
+  their values.
+
 ### SDK image access (`sdk_container`, `build.yml`)
 
 `sdk_container` (default `ghcr.io/wehagy/openwrt-sdk`) names the GHCR
@@ -155,6 +159,17 @@ Repository > the calling repository, role Write (Admin to also delete the
 superseded `-prev` version). A denied push fails the job with
 `::error::push of ... denied. The GITHUB_TOKEN of <repo> needs write access to
 the package ...` after printing the registry error.
+
+### Known limits
+
+- `ci_ref` and the `uses:` ref are two inputs; a branch that moves between the
+  read of the workflow file and the checkout mixes versions.
+- `/orgs/<owner>/packages/...` (owner an organization) is written but was not
+  exercised: every run so far had a user owner.
+- A push denied by the registry is reported with the permission to grant; the
+  message was not provoked in a run (a fresh image is always reused).
+- A rebuild started by a caller needs the package role Write; deleting the old
+  `-prev` version probably needs Admin (not exercised).
 
 ## Reusable workflow `build.yml`
 

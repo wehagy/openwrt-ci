@@ -41,8 +41,9 @@ which calls the workflows below.
   - SDK image: `resolve-sdk.sh`, `sdk-age-selftest.sh`,
     `sdk-image-ensure.sh`, `sdk-image-info.sh`.
   - Build: `resolve-build.sh`, `collect-apk.sh`, `build-summary.sh`.
-  - Test: `validate-inputs.sh`, `matrix.sh`, `resolve.sh`, `fetch-image.sh`,
-    `fetch-package.sh`, `prepare-target.sh`, `summary.sh`.
+  - Test: `validate-inputs.sh`, `caller-inputs-selftest.sh`, `matrix.sh`,
+    `resolve.sh`, `fetch-image.sh`, `fetch-package.sh`, `prepare-target.sh`,
+    `run-tests.sh`, `summary.sh`.
   - Images: `image-matrix.sh`, `resolve-image.sh`, `pull-imagebuilder.sh`,
     `imagebuilder-make.sh` (runs inside the Image Builder container),
     `check-image-outcome.sh`, `collect-images.sh`, `image-summary.sh`.
@@ -59,6 +60,8 @@ which calls the workflows below.
 - `scripts/` also has: `report-revisions.sh` (prints the harness and caller
   commits of a job), `install-tests.sh` (copies the pytest files),
   `with-test-secrets.sh` (exports the caller secrets to the tests only).
+- `harness/sample-tests/`: caller tests of this repository, used by `ci.yml`
+  (see "Package tests").
 
 ## Using the base from another repository
 
@@ -124,26 +127,58 @@ pytest session and VM (`scripts/install-tests.sh`) and can import
 like a harness file (`conftest.py`, `harness_util.py`, `test_package.py`) fails
 the job. Empty input, a missing directory or no `*.py` file: only the generic
 test runs (`::notice::` in the log). The value is validated
-(`scripts/validate-inputs.sh`: relative, `[A-Za-z0-9._/-]`, no `..`).
+(`scripts/validate-inputs.sh`: relative, `[A-Za-z0-9._/-]`, at most 256
+characters, no `..` or `.` component, no leading `-` (git could read it as an
+option) and no `.git` component in any letter case).
+
+Tests of this logic:
+
+- `scripts/caller-inputs-selftest.sh` (step "Self-test the caller inputs" of
+  the `targets` job in `test.yml`, so every caller runs it too) runs, with
+  fixed inputs, `check_tests_path`, `check_secret_names`, `validate-inputs.sh`,
+  `install-tests.sh` (only top-level `*.py` copied, name collisions fail and
+  leave the harness file intact, missing directory) and
+  `with-test-secrets.sh`. It runs every case and fails at the end if one
+  failed. It needs `jq` and `/proc`.
+- `ci.yml` calls `test.yml` with `tests_path: harness/sample-tests` and
+  `test_secrets: SAMPLE_SECRET` (`secrets: inherit`), so the base tests its
+  caller side without the calling repository. `test_caller_contract.py`
+  checks inside the QEMU job: the files sit next to the harness files, the
+  listed secret is exported (empty here: the base defines none), `GITHUB_TOKEN`
+  and the secrets JSON are not in the environment of pytest, and no ancestor
+  of pytest has `HARNESS_SECRETS_JSON` in its `/proc/<pid>/environ`.
 
 ### Secrets for the tests (`test_secrets`, `test.yml`)
 
 The base names no secret. The caller passes `secrets: inherit` and lists the
-names in `test_secrets` (spaces or commas, `[A-Z][A-Z0-9_]*`, not `GITHUB_*`,
-`RUNNER_*`, `ACTIONS_*`, `HARNESS_*` or a few process names).
+names in `test_secrets` (spaces or commas, 1 to 32 names, `[A-Z][A-Z0-9_]*`).
+Names that change how a process behaves are refused: `GITHUB_*`, `RUNNER_*`,
+`ACTIONS_*`, `HARNESS_*`, `LD_*`, `BASH_*`, `PYTHON*`, `UV_*`, `PYTEST_*`,
+`LG_*`, `NODE_OPTIONS`, `PATH`, `HOME`, `SHELL`, `IFS`, `ENV`, `PS4`, `TMPDIR`.
 
-- The step `Run tests` gets `toJSON(secrets)` and the names as env;
-  `scripts/with-test-secrets.sh` exports each named secret as an environment
-  variable of the `pytest` process only (not `GITHUB_ENV`) and removes the JSON
-  before `exec`. Values are masked by GitHub; the log shows only
-  `test-secrets: NAME is set` or `... is absent or empty`.
+- The step `Run tests` gets `toJSON(secrets)` and the names as env and runs
+  `exec ci-base/scripts/with-test-secrets.sh ci-base/scripts/run-tests.sh`.
+  The wrapper exports each named secret as an environment variable (not
+  `GITHUB_ENV`), removes the JSON and `exec`s `run-tests.sh` (uv, pytest).
+  Values are masked by GitHub; the log shows only `test-secrets: NAME is set`
+  or `... is absent or empty`.
+- What this does and does not give: the list limits what the tests receive,
+  and no process above pytest keeps the JSON with all the caller secrets in
+  its environment (the step's bash is replaced by the wrapper, which is
+  replaced by `run-tests.sh`; proved by `caller-inputs-selftest.sh` and by
+  `test_no_ancestor_keeps_the_secrets_json`, which read `/proc/<pid>/environ`
+  of every ancestor). It is hygiene against accidental exposure, not
+  isolation: the tests are code of the calling repository, whose own workflow
+  can read all its secrets anyway.
 - A name that is not a secret of the caller is exported empty: a test sees an
-  empty variable and can skip with a reason.
+  empty variable and can skip with a reason. Without `secrets: inherit`,
+  `toJSON(secrets)` holds only `github_token` (measured: keys
+  `["github_token"]` with and without `inherit` in a repository with no other
+  secret), so every listed name is absent.
 - Why not an explicit `secrets:` entry: the base would have to declare names, or
   one opaque `test_env` secret the caller composes. `inherit` plus a list keeps
   the base generic and the caller in control. It requires the caller and the
   base to be able to use `secrets: inherit` (same owner or organization).
-
 - Limit: the env block of the `Run tests` step prints `toJSON(secrets)`, so the
   log shows the names of all secrets the caller passed (`"NAME": "***"`), never
   their values.
@@ -200,7 +235,8 @@ The caller must grant `packages: write` to the job that calls `build.yml`
   - Official SDK container: `docker.io/openwrt/sdk:<arch>-<sdk_tag_suffix>`.
     Snapshot containers ship only `setup.sh`, which downloads the ~280 MB SDK
     from the OpenWrt mirror (13-14 min from the runners).
-  - Harness SDK image: `ghcr.io/<owner>/openwrt-sdk:<arch>-<sdk_tag_suffix>`,
+  - Harness SDK image: `<sdk_container>:<arch>-<sdk_tag_suffix>` (default
+    `ghcr.io/wehagy/openwrt-sdk`),
     the official container with `setup.sh` already run and removed
     (`docker/sdk-image/Dockerfile`). `openwrt/gh-action-sdk` builds from it
     (`CONTAINER` and `ARCH`), so its entrypoint finds no `setup.sh` and skips

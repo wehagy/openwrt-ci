@@ -228,7 +228,9 @@ check_charset() {
 
 # Abort unless the argument is a safe relative directory of the caller
 # repository: [A-Za-z0-9._/-], no leading or trailing slash, no empty or
-# "." / ".." component. The value is never echoed (see check_package_name).
+# "." / ".." component, no leading "-" (it could be read as an option by git)
+# and no ".git" component in any letter case (git metadata). The value is
+# never echoed (see check_package_name).
 #
 # Arguments:
 #   $1  path
@@ -237,15 +239,23 @@ check_tests_path() {
 	*[!A-Za-z0-9._/-]* | /* | */ | '' | *//* | . | ./* | */. | */./* | .. | ../* | */.. | */../*)
 		die "invalid tests path (allowed: a relative directory of [A-Za-z0-9._/-], no .. component)"
 		;;
+	-*) die "invalid tests path (must not start with -)" ;;
+	*) ;;
+	esac
+	ctp_lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+	case "${ctp_lower}" in
+	.git | .git/* | */.git | */.git/*) die "invalid tests path (.git component)" ;;
 	*) ;;
 	esac
 	[ "${#1}" -le 256 ] || die "invalid tests path (longer than 256 chars)"
 }
 
 # Abort unless the argument is a list of secret names separated by spaces or
-# commas: each [A-Z][A-Z0-9_]*, at most 32 names, none of them starting with a
-# prefix the runner or the harness owns. The value is never echoed (see
-# check_package_name).
+# commas: each [A-Z][A-Z0-9_]*, between 1 and 32 names, none of them a name that
+# the runner, the shell, Python, uv, pytest, node or labgrid read to change how
+# a process behaves (GITHUB_*, RUNNER_*, ACTIONS_*, HARNESS_*, LD_*, BASH_*,
+# PYTHON*, UV_*, PYTEST_*, LG_*, NODE_OPTIONS, PATH, HOME, SHELL, IFS, ENV, PS4,
+# TMPDIR). The value is never echoed (see check_package_name).
 #
 # Arguments:
 #   $1  names
@@ -262,12 +272,13 @@ check_secret_names() {
 		*) die "invalid secret name (must start with A-Z)" ;;
 		esac
 		case "${csn_name}" in
-		GITHUB_* | RUNNER_* | ACTIONS_* | HARNESS_* | LD_* | BASH_* | PATH | HOME | SHELL | IFS | ENV | PYTHON*)
+		GITHUB_* | RUNNER_* | ACTIONS_* | HARNESS_* | LD_* | BASH_* | PYTHON* | UV_* | PYTEST_* | LG_* | NODE_OPTIONS | PATH | HOME | SHELL | IFS | ENV | PS4 | TMPDIR)
 			die "invalid secret name (reserved prefix or name)"
 			;;
 		*) ;;
 		esac
 		csn_count=$((csn_count + 1))
 	done
+	[ "${csn_count}" -ge 1 ] || die "no secret name in the list"
 	[ "${csn_count}" -le 32 ] || die "too many secret names (at most 32)"
 }

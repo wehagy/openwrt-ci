@@ -60,7 +60,9 @@ ghcr_inspect() {
 	gi_token=$(jq -er .token "${gi_dir}/token.json") || die "no token in the GHCR token answer"
 	ghcr_write_curl_config "${gi_dir}/bearer.conf" "${gi_token}"
 
-	gi_accept='application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
+	# Index types are accepted so that an index is answered 200 and rejected
+	# below with a clear message, instead of a misleading 404.
+	gi_accept='application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json'
 	gi_code=$(ghcr_curl -K "${gi_dir}/bearer.conf" -H "Accept: ${gi_accept}" \
 		-o "${gi_dir}/manifest.json" -w '%{http_code}' \
 		"https://ghcr.io/v2/${gi_repo}/manifests/${gi_tag}") ||

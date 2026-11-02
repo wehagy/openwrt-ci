@@ -119,7 +119,7 @@ if [ "${decision}" = reuse ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Rebuild: run setup.sh once, label, push.
+# Rebuild: run setup.sh once, label and push.
 # ---------------------------------------------------------------------------
 # The creation time is taken before setup.sh downloads the SDK, so the image
 # is never younger than its content.
@@ -136,21 +136,23 @@ archive_name=${archive_line#"${archive_sha} *"}
 check_sdk_archive "${archive_sha}" "${archive_name}"
 
 # A config-only layer: FROM the stage, plus the labels read by the build job.
-docker build --pull=false -t "${image}" \
+# Provenance and SBOM are off: with them the push is an image index plus
+# attestation manifests, which the registry lists as extra package versions
+# and which ghcr_inspect rejects. --push writes one plain image manifest.
+docker buildx build --pull=false --provenance=false --sbom=false --push -t "${image}" \
 	--label "${label_created}=${created}" \
 	--label "org.opencontainers.image.source=https://github.com/${repository}" \
 	--label "org.opencontainers.image.base.name=${base_image}" \
 	--label "${label_archive}=${archive_name}" \
 	--label "${label_archive_sha}=${archive_sha}" \
 	--label "${label_run_id}=${run_id}" \
-	--label "${label_run_attempt}=${run_attempt}" - <<EOF || die "docker build (labels) failed"
+	--label "${label_run_attempt}=${run_attempt}" - <<EOF || die "docker buildx build (labels, push) failed"
 FROM ${stage}
 EOF
 
 if [ -n "${old_digest}" ]; then
 	list_versions "before the push"
 fi
-docker push "${image}" || die "docker push failed"
 
 # ---------------------------------------------------------------------------
 # Verify the push and delete the version it superseded.

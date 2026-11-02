@@ -347,15 +347,20 @@ Optional: `tests_path`, `test_secrets` and `ci_ref` (see above).
   `*-vmlinux-initramfs.elf`; `armsr-armv8` and `malta-*` run from RAM with
   256 MB.
 - Network of the VM (`harness/tests/conftest.py`): the session waits for a
-  default route and an A record, then runs `apk update` up to 5 times, 5 s
-  apart. On `malta-le` and `malta-be` (where the test creates the `wan`
+  default route and an A record, then runs `apk update`, repeated up to 5 times, 5 s
+  apart, only when stderr has `Failed to send request: Operation not
+  permitted`; any other failure (`UNTRUSTED signature`, `404 Not Found`, ...)
+  fails on the first attempt. `unavailable` alone does not qualify: the
+  `1 unavailable, 0 stale` line of the lost fetch is what a missing file
+  prints too. On `malta-le` and `malta-be` (where the test creates the `wan`
   interface) one of the parallel fetches of the first `apk update` failed with
   `wget: Failed to send request: Operation not permitted` while the other
   repositories succeeded, a different repository each time (runs
   41427983225, 41360955048); route and DNS were already up, and the cause
-  inside the VM was not proven. Each failed attempt is logged as a
-  `harness` warning with the output of `apk update`; after the last one the
-  session fails with the output of all attempts.
+  inside the VM was not proven. Each repeat is logged as a `harness`
+  warning with the output of `apk update` and added as a line to the job
+  summary; after the last attempt, or at a failure that is not the lost
+  fetch, the session fails with the output of the attempts made.
 - Timeouts in the VM: queries are bounded at 30 s; the `apk` commands of
   `test_package.py` (`apk info -L`, `apk info -e`, `apk list -I`) at 120 s,
   because `apk info -L` right after the install took 0.5 to 15 s in healthy
@@ -426,8 +431,16 @@ above).
     (called by `imagebuilder-make.sh`) therefore runs `setup.sh` again, up to
     3 times with 120 s between them, when and only when its output has the
     checksum mismatch; each retry prints `warn: image builder archive did not
-    match sha256sums (attempt N of 3), retrying in 120 s`, and any other
-    failure, or a mismatch in all attempts, fails the job. A retry fetches
+    match sha256sums (attempt N of 3), retrying in 120 s` and a
+    `::warning title=Image Builder setup retried::` annotation (shown in the
+    run summary), and any other failure, or a mismatch in all attempts,
+    fails the job. A retry starts only if the time used, the wait and the
+    longest attempt so far fit in `HARNESS_IB_SETUP_BUDGET` (default 3000 s;
+    the `image` job times out at 90 min = 5400 s and the pull, `make image`
+    and the upload need the rest; one attempt took 3235 s for bananapi);
+    otherwise the job fails at once with `not retrying: <used> s used, a
+    retry needs about <n> s, budget <b> s` instead of being killed by the
+    timeout. A retry fetches
     `sha256sums` again and restores the keys that `setup.sh` deletes.
     `scripts/ib-setup-selftest.sh` (step "Image Builder setup self-test" of
     the `profiles` job) runs it against a fake `setup.sh`.

@@ -5,22 +5,22 @@ in QEMU. Image builds and upstream pull requests are planned.
 
 ## Status
 
-| Done                                                                  | Pending                                           |
-|-----------------------------------------------------------------------|---------------------------------------------------|
-| SDK build (`build.yml`) on lines `25.12` and `main`, 5 architectures  | QEMU images and tests for line `main` (slice P1b) |
-| QEMU test (`test.yml`) on line `25.12`, sources `feed` and `artifact` | QEMU target for `mips_24kc` (`malta-be`)          |
-| `ci.yml`: build both lines, then test the `25.12` build               | NetBird runtime tests                             |
-|                                                                       | Image build                                       |
-|                                                                       | Upstream PR automation and upstream PR testing    |
+| Done                                                                              | Pending                                        |
+|-----------------------------------------------------------------------------------|------------------------------------------------|
+| SDK build (`build.yml`) on lines `25.12` and `main`, 5 architectures              | NetBird runtime tests                          |
+| QEMU test (`test.yml`) on lines `25.12` and `main`, sources `feed` and `artifact` | Image build                                    |
+| QEMU targets `x86-64`, `armsr-armv8`, `malta-le`, `malta-be` on both lines        | Upstream PR automation and upstream PR testing |
+| `ci.yml`: build both lines, then test each build                                  |                                                |
 
 ## Layout
 
 - `harness/`
-  - `lines.yml`: per-line data. `25.12` has all keys; `main` has only the
-    build keys (`sdk_tag_suffix`, `packages_branch`, `imagebuilder_tag_suffix`),
-    so `scripts/resolve.sh` fails for `main` until P1b.
-  - `targets.yml`: per-QEMU-target data (`x86-64`, `armsr-armv8`, `malta-le`),
-    image names only for `25.12`.
+  - `lines.yml`: per-line data. `release_source` selects how the image
+    version is found: `releases` (`25.12`: latest `25.12.x` of the releases
+    index) or `snapshot` (`main`: the `version.buildinfo` of the target
+    directory, e.g. `r37969-5799d2da76`).
+  - `targets.yml`: per-QEMU-target data (`x86-64`, `armsr-armv8`, `malta-le`,
+    `malta-be`) and the image name per line.
   - `tests/`: pytest tests run inside the VMs through
     [aparcar/openwrt-tests](https://github.com/aparcar/openwrt-tests).
   - `openwrt-tests.uv.lock`: pinned Python environment of those tests.
@@ -67,17 +67,27 @@ use; an invalid value fails the run):
 
 | Input     | Meaning                                    | Accepted                              |
 |-----------|--------------------------------------------|---------------------------------------|
-| `line`    | OpenWrt line, a key of `harness/lines.yml` | `main` or `NN.NN` (only `25.12` has QEMU data today) |
+| `line`    | OpenWrt line, a key of `harness/lines.yml` | `main` or `NN.NN` (`25.12` and `main` have QEMU data) |
 | `package` | package name to install and check          | `[a-z0-9][a-z0-9._+-]*`, <= 128 chars |
 | `source`  | where the `.apk` comes from                | `feed` (official release feed) or `artifact` (`apk-<package>-<line>-<arch>` from `build.yml` in the same workflow run) |
 
 - One job per target of `harness/targets.yml` that has an image for the line
-  (`x86-64`, `armsr-armv8`, `malta-le`). Each job downloads the latest stable
-  release image of the line, verifies its sha256, boots it in QEMU, gets the
-  `.apk` (`scripts/fetch-package.sh`) and runs `harness/tests/test_package.py`.
+  (`x86-64`, `armsr-armv8`, `malta-le`, `malta-be`; all four on both lines).
+  Each job downloads the image (line `25.12`: latest stable release; line
+  `main`: current snapshot), verifies its sha256 against the `sha256sums` of
+  the same directory, boots it in QEMU, gets the `.apk`
+  (`scripts/fetch-package.sh`) and runs `harness/tests/test_package.py`.
+- Snapshot images are rebuilt daily and each target directory is published on
+  its own, so two targets of one run can report different snapshot versions.
+  The job summary therefore lists, per job, the release or snapshot version
+  (`HARNESS_RELEASE`), the image URL, the image sha256 and the image date
+  (`Last-Modified` of the file).
 - With `source: artifact`, a target uses the artifact of its `arch` in
-  `targets.yml` (`x86_64`, `aarch64_generic`, `mipsel_24kc`).
-  `aarch64_cortex-a53` and `mips_24kc` are built but not tested yet.
+  `targets.yml` (`x86_64`, `aarch64_generic`, `mipsel_24kc`, `mips_24kc`).
+  `aarch64_cortex-a53` is built but not tested yet (no QEMU target).
+- Image formats: `x86-64` is a gzipped combined image; `armsr-armv8` and
+  `malta-*` boot the initramfs kernel (`*-initramfs-kernel.bin`; the release
+  `malta-be` image is `*-vmlinux-initramfs.elf`) from RAM with 256 MB.
 - Tests: install, `apk` reports the expected version, and every `/etc/init.d`
   script the package installs is a procd script whose instances all stay
   running with constant pids for 10 s. The service test is skipped only when
@@ -93,8 +103,7 @@ On push to `feat/**`, for package `netbird`:
 | `build-25-12` | `build.yml` | `line: 25.12`                     |               |
 | `build-main`  | `build.yml` | `line: main`                      |               |
 | `test-25-12`  | `test.yml`  | `line: 25.12`, `source: artifact` | `build-25-12` |
-
-Line `main` is only built: it has no QEMU images until P1b.
+| `test-main`   | `test.yml`  | `line: main`, `source: artifact`  | `build-main`  |
 
 ## Artifacts
 

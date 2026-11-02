@@ -9,10 +9,12 @@ CI environment fixes, measured in the spike (runs 41354702952 and later):
   F1  The runner has no IPv6 egress but downloads.openwrt.org has an AAAA
       record, so fetches that pick IPv6 fail with EPERM. dnsmasq therefore
       filters AAAA answers.
-  F2  malta-le 25.12 board.json defines only lan; without a wan interface
-      the VM has no default route. wan is created (dhcp on eth1) if the
-      configuration has none. The decision reads the uci configuration, not
-      the runtime state: netifd may not have loaded an existing wan yet.
+  F2  Some images define only lan (malta-le 25.12, and malta-be on both
+      lines, run 41376283543); without a wan interface the VM has no default
+      route. wan is created (dhcp on eth1) if the configuration has none.
+      The malta-le snapshot image already has one and is left alone. The
+      decision reads the uci configuration, not the runtime state: netifd
+      may not have loaded an existing wan yet.
 
 After F1 and F2 the setup waits until the VM resolves an A record for
 downloads.openwrt.org and has a default route, so the tests start from a

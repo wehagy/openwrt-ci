@@ -89,6 +89,11 @@ jobs:
           HARNESS_CI_REF: ${{ inputs.ci_ref }}
         run: ci-base/scripts/report-revisions.sh
 
+      # Fixed inputs prove the validators of tests_path and test_secrets, the
+      # copy of the caller tests and the secrets wrapper (needs jq, /proc).
+      - name: Self-test the caller inputs
+        run: ci-base/scripts/caller-inputs-selftest.sh
+
       - name: Validate inputs
         env:
           HARNESS_LINE: ${{ inputs.line }}

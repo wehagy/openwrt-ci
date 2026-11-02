@@ -13,11 +13,11 @@ which calls the workflows below.
 
 | Done                                                                              | Pending                                             |
 |-----------------------------------------------------------------------------------|-----------------------------------------------------|
-| SDK build (`build.yml`) on lines `25.12` and `main`, 5 architectures              | NetBird runtime tests (caller repository)           |
+| SDK build (`build.yml`) on lines `25.12` and `main`, architectures given by the caller | NetBird runtime tests (caller repository)           |
 | Own SDK image on GHCR, rebuilt when older than 1 day or on request                | Scheduled SDK image refresh (none today: lazy only) |
 | QEMU test (`test.yml`) on lines `25.12` and `main`, sources `feed` and `artifact` | Upstream PR automation and testing (caller repository) |
 | QEMU targets `x86-64`, `armsr-armv8`, `malta-le`, `malta-be` on both lines        |                                                     |
-| Image build (`images.yml`) on lines `25.12` and `main`, 8 profiles                |                                                     |
+| Image build (`images.yml`) on lines `25.12` and `main`, profiles and packages given by the caller |                                                     |
 | `ci.yml`: build both lines, then test each build and build its images             |                                                     |
 | Callable from another repository: `ci_ref`, `tests_path`, `test_secrets`, `sdk_container` |                              |
 
@@ -30,8 +30,9 @@ which calls the workflows below.
     directory, e.g. `r37969-5799d2da76`). Both lines also have the build
     keys (`sdk_tag_suffix`, `sdk_max_age_days`, `packages_branch`,
     `imagebuilder_tag_suffix`).
-  - `images.yml`: image profiles (target, subtarget, profile, package
-    architecture), extra packages and the globs of the files kept as artifacts.
+  - `images.yml`: the globs of the files kept as artifacts and the default of
+    the `profiles` input (the profile the base's own CI builds). The image
+    choices of a caller are inputs of `images.yml`, not data of this repository.
   - `targets.yml`: per-QEMU-target data (`x86-64`, `armsr-armv8`, `malta-le`,
     `malta-be`) and the image name per line.
   - `selftests/`: pytest tests of the harness helpers (no VM).
@@ -46,7 +47,10 @@ which calls the workflows below.
   - Test: `validate-inputs.sh`, `caller-inputs-selftest.sh`, `matrix.sh`,
     `resolve.sh`, `fetch-image.sh`, `fetch-package.sh`, `prepare-target.sh`,
     `run-tests.sh`, `summary.sh`.
-  - Images: `image-matrix.sh`, `resolve-image.sh`, `pull-imagebuilder.sh`,
+  - Image inputs: `resolve-profiles.sh` (profiles against `profiles.json`),
+    `resolve-archs.sh` (architecture matrix of `build.yml`),
+    `image-inputs-selftest.sh`, `lib/image-inputs.sh` (validators).
+  - Images: `resolve-image.sh`, `pull-imagebuilder.sh`,
     `imagebuilder-make.sh` (runs inside the Image Builder container) with
     `ib-setup.sh` and `ib-setup-selftest.sh`,
     `check-image-outcome.sh`, `collect-images.sh`, `image-summary.sh`.
@@ -86,7 +90,19 @@ jobs:
       tests_path: packages/netbird/tests   # optional
       test_secrets: NB_SETUP_KEY           # optional
     secrets: inherit                       # only with test_secrets
+  image:
+    needs: build
+    uses: wehagy/openwrt-ci/.github/workflows/images.yml@main
+    with:
+      line: "25.12"
+      package: netbird
+      ci_ref: main
+      profiles: |                          # optional: see images.yml
+        x86/64/generic
+        ath79/generic/tplink_archer-c7-v4:too-big
+      packages: luci-ssl -dnsmasq dnsmasq-full
 ```
+(with the same `profiles:` given to `build.yml`.)
 
 No tags are used: the callers follow a branch (`@main`).
 
@@ -223,7 +239,8 @@ Inputs (`line` and `package` required):
 | `line`    | OpenWrt line, a key of `harness/lines.yml` with build keys | `25.12` or `main`                     |
 | `package` | package to build, a directory of `openwrt/packages`        | `[a-z0-9][a-z0-9._+-]*`, <= 128 chars |
 
-Optional inputs: `refresh_sdk` (boolean, default `false`): rebuild the SDK
+Optional inputs: `archs` and `profiles` (see "Architectures");
+`refresh_sdk` (boolean, default `false`): rebuild the SDK
 images of the line even when they are fresh; `sdk_container` (see above);
 `feed_repository` and `feed_ref` (see "Feed source"); `ci_ref` (see above).
 Outputs: `feed_repository`, `feed_ref` and `feed_sha` (see "Feed source").
@@ -231,9 +248,10 @@ Outputs: `feed_repository`, `feed_ref` and `feed_sha` (see "Feed source").
 The caller must grant `packages: write` to the job that calls `build.yml`
 (`ci.yml` does); the workflow itself needs it only in `sdk-image`.
 
-- Three jobs, `feed` once and the other two per architecture: `x86_64`, `aarch64_generic`,
-  `aarch64_cortex-a53`, `mipsel_24kc`, `mips_24kc` (`fail-fast: false`).
-  `sdk` (the build) needs `sdk-image`, which waits for all five architectures.
+- Three jobs, `feed` once and the other two per architecture of the `archs`
+  input (`fail-fast: false`; by default `x86_64`, `aarch64_generic`,
+  `mipsel_24kc`, `mips_24kc`, those of the QEMU test targets). `sdk` (the build)
+  needs `sdk-image`, which waits for all the architectures.
 - The SDK image repository is named once, by the workflow `env`
   `HARNESS_SDK_CONTAINER` (the `sdk_container` input, default
   `ghcr.io/wehagy/openwrt-sdk`): `sdk-image` publishes it, `sdk` reads it and
@@ -313,6 +331,34 @@ The caller must grant `packages: write` to the job that calls `build.yml`
   duration. The `sdk-image` job summary records the decision and, for a
   rebuild, the deleted version.
 - Artifact: `apk-<package>-<line>-<arch>` (the `.apk` alone).
+
+### Architectures (`archs`, `profiles`)
+
+The architecture matrix of `sdk-image` and `sdk` is computed by the `feed` job
+(`scripts/resolve-archs.sh`), so an invalid value fails before an SDK image is
+rebuilt.
+
+| Input      | Meaning                                                  | Accepted                                              |
+|------------|----------------------------------------------------------|-------------------------------------------------------|
+| `archs`    | package architectures to build, separated by spaces or newlines | `@tests`, `@profiles`, or a name `[a-z0-9][a-z0-9_-]*` (<= 64 chars); 1 to 16 after expansion; default `@tests @profiles` |
+| `profiles` | image profiles whose architectures `@profiles` adds       | same value as the `profiles` input of `images.yml` (see there); empty: the default profile of `harness/images.yml` |
+
+- `@tests` is the `arch` of every target of `harness/targets.yml` (`x86_64`,
+  `aarch64_generic`, `mipsel_24kc`, `mips_24kc`), so the architectures the QEMU
+  jobs need are never listed twice. `@profiles` is the `arch_packages` of the
+  `profiles.json` of each profile (see "Reusable workflow `images.yml`").
+  Duplicates are dropped.
+- A caller passes the same `profiles` to `build.yml` and `images.yml`, and the
+  architectures of its images are built without being named. A caller that
+  wants only the architecture of one profile passes `archs: "@profiles"`.
+- A new architecture needs no change here: its SDK image
+  `<sdk_container>:<arch>-<suffix>` is missing, so `sdk-image` builds and pushes
+  it (see above; the caller needs write access to the package). The official
+  container `docker.io/openwrt/sdk:<arch>-<suffix>` must exist; a name that
+  does not exist fails at the pull in `sdk-image`.
+- Job names (`<line> <arch>`, `sdk-image <line> <arch>`) and the artifact
+  `apk-<package>-<line>-<arch>` are unchanged; only the set of architectures
+  moved from the workflow file to the inputs.
 
 ### Feed source (`feed_repository`, `feed_ref`)
 
@@ -424,39 +470,47 @@ Optional: `tests_path`, `test_secrets` and `ci_ref` (see above).
 ## Reusable workflow `images.yml`
 
 Inputs (validated before use, like `build.yml`): `line` (a key of
-`harness/lines.yml`) and `package`, both required; optional `ci_ref` (see
-above).
+`harness/lines.yml`) is required; optional `package`, `profiles`, `packages`
+and `ci_ref` (see above). The base names no device: the image choices belong to
+the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci-packages),
+`packages/<name>/config.yml`).
 
-- One job per profile of `harness/images.yml` (`fail-fast: false`), from the
-  profiles and extra packages of
-  [wehagy/owpib](https://github.com/wehagy/owpib); extra packages
-  `luci-app-attendedsysupgrade luci-app-uhttpd luci-ssl owut` plus the built
-  package:
+| Input      | Meaning                                                 | Accepted                                              |
+|------------|---------------------------------------------------------|-------------------------------------------------------|
+| `package`  | package built by `build.yml`, installed in every image  | as in `build.yml`; empty: images without a package of their own (no `apk-*` artifact is read, no manifest line is checked) |
+| `profiles` | the images to build, separated by spaces or newlines    | `<target>/<subtarget>/<profile>[:too-big]`; target and subtarget `[a-z0-9]+` (<= 32), profile `[A-Za-z0-9_-]+` (<= 64); 1 to 16; empty: `profiles` of `harness/images.yml` (`x86/64/generic`, the base's own CI) |
+| `packages` | packages added to every image next to the built one     | `<name>` adds, `-<name>` removes (Image Builder `PACKAGES` syntax, e.g. `-dnsmasq dnsmasq-full`); name as `package`; at most 100 and 2048 characters; empty: none |
 
-  | Profile id                          | Target / subtarget | Profile                             | Package arch         |
-  |-------------------------------------|--------------------|-------------------------------------|----------------------|
-  | `x86-64-generic`                    | `x86/64`           | `generic`                           | `x86_64`             |
-  | `xiaomi-mi-router-ax3000t-ubootmod` | `mediatek/filogic` | `xiaomi_mi-router-ax3000t-ubootmod` | `aarch64_cortex-a53` |
-  | `acer-predator-w6x-stock`           | `mediatek/filogic` | `acer_predator-w6x-stock`           | `aarch64_cortex-a53` |
-  | `bananapi-bpi-r3`                   | `mediatek/filogic` | `bananapi_bpi-r3`                   | `aarch64_cortex-a53` |
-  | `tplink-archer-c7-v4`               | `ath79/generic`    | `tplink_archer-c7-v4`               | `mips_24kc`          |
-  | `totolink-x5000r`                   | `ramips/mt7621`    | `totolink_x5000r`                   | `mipsel_24kc`        |
-  | `glinet-gl-mt1300`                  | `ramips/mt7621`    | `glinet_gl-mt1300`                  | `mipsel_24kc`        |
-  | `buffalo-wzr-hp-g450h`              | `ath79/generic`    | `buffalo_wzr-hp-g450h`              | `mips_24kc`          |
-
-  The last two are 32 MB flash devices added to learn whether the package
-  fits a 32 MB device. Both have a size check in the image build
-  (`Build/check-size`, `include/image-commands.mk`) against the firmware
-  partition, tag `v25.12.6` of `openwrt/openwrt`:
-
-  | Profile                | `IMAGE_SIZE`                                    | Flash layout                                                                                                                                       |
-  |------------------------|-------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
-  | `glinet_gl-mt1300`     | `32448k` (`ramips/image/mt7621.mk:1563`)        | one SPI NOR; partitions `u-boot` ... `firmware` `0x50000` + `0x1fb0000` = `0x2000000` (`ramips/dts/mt7621_glinet_gl-mt1300.dts:121`)             |
-  | `buffalo_wzr-hp-g450h` | `32256k` (`ath79/image/generic.mk:729`)         | two SPI NOR chips concatenated (`ath79/dts/ar7242_buffalo_wzr-bhr.dtsi:61-63`); `firmware` `0x60000` + `0x1f80000` (`...wzr-bhr.dtsi:89-90`)      |
-
-  A profile with `expect: too-big` in `harness/images.yml` is an expected
-  failure (see below); the two 32 MB profiles have none unless their image was
-  measured too big.
+- `:too-big` after a profile is the expectation described below (the image is
+  known not to fit the flash).
+- The job `profiles` (`scripts/resolve-profiles.sh`) reads, for each profile,
+  the official `profiles.json` of its target and subtarget: for `25.12` the
+  directory of the latest `25.12.x` release (as the Image Builder tag), for
+  `main` the snapshot directory (`image_base_url` of `harness/lines.yml`).
+  - The file must exist (otherwise `target <t>/<s> does not exist on line <l>:
+    no profiles.json at <url>`) and its `profiles` object must have the profile
+    (otherwise `profile <p> does not exist in <t>/<s> on line <l> (<n> profiles
+    there; nearest: ...)`). The package architecture is its `arch_packages`
+    field. An invalid input fails here, within about a minute, before an SDK or
+    Image Builder job exists.
+  - The matrix has one entry per profile with the id (job name
+    `<line> <id>`, artifact name), target, subtarget, profile, architecture and
+    expectation. The id is the profile name in lower case with `_` as `-`
+    (`glinet_gl-mt1300` is `glinet-gl-mt1300`); a profile called `generic` gets
+    `<target>-<subtarget>` in front (`x86-64-generic`). Two entries with the
+    same id fail.
+  - The values are checked (charset, length, count) before anything is
+    written to `$GITHUB_OUTPUT` or `$GITHUB_ENV`, and never echoed.
+- One job per entry (`fail-fast: false`). The Image Builder package list is the
+  `packages` input followed by the built package. After the build
+  `scripts/collect-images.sh` checks the manifest: `<package> - <version>` is a
+  line, every package added by `packages` is listed and every package removed
+  with `-` is not (names are compared whole: `-dnsmasq` is satisfied by
+  `dnsmasq-full`).
+- `scripts/image-inputs-selftest.sh` (step "Image inputs self-test" of the
+  `profiles` job here and of the `feed` job of `build.yml`) proves the
+  validators, the resolution against a fake mirror (`file://` URLs, no network)
+  and the manifest check with fixed inputs.
 
 - Image Builder: `docker.io/openwrt/imagebuilder:<target>-<subtarget>-<tag>`
   (`scripts/resolve-image.sh`).
@@ -511,19 +565,18 @@ above).
   not proven so (size not above the limit, root filesystem not above the
   partition, no root filesystem size) or only empty-size warnings: the job
   fails ("not proven by numbers"). The proven result is compared with the
-  profile's `expect` key of `harness/images.yml`:
+  profile's `:too-big` suffix:
 
-  | `expect`          | Image builds | Image too big (proven)                         |
+  | suffix            | Image builds | Image too big (proven)                         |
   |-------------------|--------------|------------------------------------------------|
   | absent (default)  | job green    | job fails, message and sizes quoted            |
-  | `too-big`         | job fails: "now fits", remove the key | job green, no artifact |
+  | `:too-big`        | job fails: "now fits", remove the suffix | job green, no artifact |
 
-  `tplink-archer-c7-v4` and `totolink-x5000r` (16 MB flash) are `expect:
-  too-big`. The summary of such a job quotes the Image Builder messages with
-  the actual and limit bytes (for the TP-Link, the root filesystem against its
-  partition, because the warning has no size).
+  The summary of a `:too-big` job quotes the Image Builder messages with the
+  actual and limit bytes (for a tplink-safeloader image, the root filesystem
+  against its partition, because the warning has no size).
   - Failures: a `make` error or a missing `.apk` fails the Image Builder step
-    in both cases. A profile with `expect: too-big` that is proven too big
+    in both cases. A profile with `:too-big` that is proven too big
     skips the manifest check (`scripts/collect-images.sh`) and the artifact
     because no image exists, so a wrong manifest or a missing package in such
     a profile is not detected.
@@ -532,15 +585,16 @@ above).
     `make.log` fixtures: the empty-size warning alone, `10 > 20`, a
     `partition too big` without or with a smaller root filesystem must fail;
     the real `totolink-x5000r` and `tplink-archer-c7-v4` messages are a green
-    too big; a fitting image and a fitting `expect: too-big` profile ("now
+    too big; a fitting image and a fitting `:too-big` profile ("now
     fits") are checked too.
 - The job summary (`scripts/image-summary.sh`) lists profile, Image Builder
   image and digest, size and pull time, `setup.sh` and `make image` durations,
   the expectation and outcome, the manifest check, every artifact file with
   size and sha256 and, on failure or expected failure, the Image Builder
   messages of `make.log`.
-- Artifact: `images-<package>-<line>-<profile id>` (none for a profile that is
-  too big as expected).
+- Artifact: `images-<package>-<line>-<profile id>` (`nopkg` stands for the
+  package when there is none; no artifact for a profile that is too big as
+  expected).
 
 ## Own CI `ci.yml`
 
@@ -551,7 +605,10 @@ Dispatch inputs: `refresh_sdk` (boolean, passed to `build.yml`) and `lines`
 (`both`, `25.12` or `main`: the other build job is skipped); `package`
 (default `netbird`), `feed_repository` and `feed_ref` (passed to `build.yml`,
 see "Feed source"); `stages` (`all`, or `build` to skip the test and image
-jobs). Each build job has `packages: write`. The job `feed-report` prints the
+jobs); `profiles` and `packages` (the `profiles` and `packages` inputs; empty
+profiles: `x86/64/generic` of `harness/images.yml`; empty packages: the CI uses
+`-dnsmasq dnsmasq-full`, which exercises the removal syntax and the manifest
+check). Each build job has `packages: write`. The job `feed-report` prints the
 feed outputs (`feed_repository`, `feed_ref`, `feed_sha`) of the builds that
 succeeded.
 
@@ -587,8 +644,9 @@ Packages are added in the calling repository
 - `harness/tests/test_package.py` is generic: no per-package code or data.
   Package-specific runtime tests are files in the caller repository, given by
   `tests_path`; they do not exist yet.
-- Build images with the package: call `images.yml` with the same `line` and
-  `package`, `needs:` the build job.
+- Build images with the package: call `images.yml` with the same `line`,
+  `package`, `profiles` and `packages`, `needs:` the build job; pass the same
+  `profiles` to `build.yml`, so that the architectures of the images are built.
 - Package trees other than the line's branch of `openwrt/packages` (a test
   repository, an upstream pull request): `feed_repository` and `feed_ref` (see
   "Feed source"). Local feeds of the calling repository are not supported.

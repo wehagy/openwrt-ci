@@ -37,9 +37,6 @@ targets_file=${harness_dir}/targets.yml
 line_key='.lines[strenv(LINE)]'
 target_key='.targets[strenv(TARGET)]'
 
-work_dir=$(mktemp -d)
-trap 'rm -rf "${work_dir}"' EXIT
-
 # ---------------------------------------------------------------------------
 # Target data and placeholder expansion.
 # ---------------------------------------------------------------------------
@@ -68,13 +65,7 @@ releases)
 	if [ -z "${release}" ]; then
 		index_url=$(yq_get "${lines_file}" "${line_key}.releases_index_url")
 		release_regex=$(yq_get "${lines_file}" "${line_key}.release_regex")
-		curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 -o "${work_dir}/index.html" "${index_url}" ||
-			die "cannot fetch ${index_url}"
-		grep -oE "href=\"${release_regex}/\"" "${work_dir}/index.html" \
-			>"${work_dir}/hrefs" || die "no release ${release_regex} at ${index_url}"
-		sed -e 's/^href="//' -e 's|/"$||' "${work_dir}/hrefs" >"${work_dir}/versions"
-		sort -V -o "${work_dir}/sorted" "${work_dir}/versions"
-		release=$(tail -n 1 "${work_dir}/sorted")
+		release=$(latest_release "${index_url}" "${release_regex}")
 	fi
 	# The release goes to GITHUB_ENV and into URLs: keep it to a safe
 	# charset whatever its origin (pin or index page).

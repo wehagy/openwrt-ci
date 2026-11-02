@@ -171,3 +171,37 @@ check_bool() {
 	*) die "invalid boolean (allowed: true or false)" ;;
 	esac
 }
+
+# Print the latest non-rc release listed in an HTML releases index: the
+# highest version (sort -V) among the directory names matching the regex, so
+# -rcN never matches.
+#
+# Arguments:
+#   $1  URL of the releases index
+#   $2  ERE of the release directory names (e.g. 25\.12\.[0-9]+)
+latest_release() {
+	lr_dir=$(mktemp -d) || die "cannot create a temporary directory"
+	curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 -o "${lr_dir}/index.html" "$1" ||
+		die "cannot fetch $1"
+	grep -oE "href=\"$2/\"" "${lr_dir}/index.html" >"${lr_dir}/hrefs" ||
+		die "no release $2 at $1"
+	sed -e 's/^href="//' -e 's|/"$||' "${lr_dir}/hrefs" >"${lr_dir}/versions"
+	sort -V -o "${lr_dir}/sorted" "${lr_dir}/versions"
+	lr_release=$(tail -n 1 "${lr_dir}/sorted")
+	rm -rf "${lr_dir}"
+	printf '%s\n' "${lr_release}"
+}
+
+# Abort unless a value is non-empty and made only of the given characters.
+# The value is never echoed (see check_package_name).
+#
+# Arguments:
+#   $1  what the value is (used in the error message)
+#   $2  value
+#   $3  case pattern of one forbidden character, e.g. '[!a-z0-9-]'
+check_charset() {
+	case "$2" in
+	*$3* | '') die "invalid $1" ;;
+	*) ;;
+	esac
+}

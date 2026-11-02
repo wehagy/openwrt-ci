@@ -89,8 +89,8 @@ The caller must grant `packages: write` to the job that calls `build.yml`
     `docker build`, add labels, `docker push`, then delete the superseded
     package version (`gh api -X DELETE
     /users/<owner>/packages/container/openwrt-sdk/versions/<id>`; the version
-    whose `name` is the old manifest digest). The package versions before and
-    after are printed in the log. Otherwise the image is reused untouched.
+    whose `name` is the old manifest digest). The package versions after the push
+    (old one still listed, untagged) and after the delete are printed in the log. Otherwise the image is reused untouched.
   - `concurrency: sdk-image-<line>-<arch>` (no cancel): runs never rebuild the
     same image at once; a run that waited finds the image fresh. GitHub keeps
     one running and one pending job per group, so a third concurrent run

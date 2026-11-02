@@ -150,10 +150,6 @@ docker buildx build --pull=false --provenance=false --sbom=false --push -t "${im
 FROM ${stage}
 EOF
 
-if [ -n "${old_digest}" ]; then
-	list_versions "before the push"
-fi
-
 # ---------------------------------------------------------------------------
 # Verify the push and delete the version it superseded.
 # ---------------------------------------------------------------------------
@@ -165,6 +161,9 @@ new_digest=$(ghcr_digest "${verify_dir}")
 new_created=$(ghcr_label "${verify_dir}" "${label_created}")
 [ "${new_created}" = "${created}" ] || die "the pushed image carries another creation time"
 printf 'sdk-image: pushed %s created %s\n' "${new_digest}" "${created}"
+if [ -n "${old_digest}" ]; then
+	list_versions "after the push, before the delete"
+fi
 
 deleted=none
 if [ -n "${old_digest}" ]; then
@@ -184,7 +183,7 @@ if [ -n "${old_digest}" ]; then
 	deleted="${old_id} (${old_digest})"
 	printf 'sdk-image: deleted superseded version %s\n' "${deleted}"
 fi
-list_versions "after the push"
+list_versions "after the delete"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
 	{

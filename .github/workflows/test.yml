@@ -122,16 +122,6 @@ jobs:
       matrix:
         target: ${{ fromJSON(needs.targets.outputs.matrix).target }}
     steps:
-      # Nothing derived from an input is written to GITHUB_ENV before this.
-      - name: Validate inputs
-        env:
-          HARNESS_LINE: ${{ inputs.line }}
-          HARNESS_PACKAGE: ${{ inputs.package }}
-          HARNESS_SOURCE: ${{ inputs.source }}
-          HARNESS_TESTS_PATH: ${{ inputs.tests_path }}
-          HARNESS_TEST_SECRETS: ${{ inputs.test_secrets }}
-        run: ci-base/scripts/validate-inputs.sh
-
       # The harness (scripts/, harness/, docker/) is checked out explicitly: a
       # reusable workflow runs in the caller's context, so a plain checkout
       # would fetch the calling repository. Everything runs from ci-base/.
@@ -148,6 +138,16 @@ jobs:
         env:
           HARNESS_CI_REF: ${{ inputs.ci_ref }}
         run: ci-base/scripts/report-revisions.sh
+
+      # Nothing derived from an input is written to GITHUB_ENV before this.
+      - name: Validate inputs
+        env:
+          HARNESS_LINE: ${{ inputs.line }}
+          HARNESS_PACKAGE: ${{ inputs.package }}
+          HARNESS_SOURCE: ${{ inputs.source }}
+          HARNESS_TESTS_PATH: ${{ inputs.tests_path }}
+          HARNESS_TEST_SECRETS: ${{ inputs.test_secrets }}
+        run: ci-base/scripts/validate-inputs.sh
 
       # Only the tests directory of the calling repository (default repository
       # and ref: the caller's, github.sha).

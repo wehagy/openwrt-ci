@@ -228,23 +228,15 @@ jobs:
           uv --project openwrt-tests sync --locked
 
       # The caller secrets named by test_secrets reach only the pytest process
-      # (ci-base/scripts/with-test-secrets.sh), never GITHUB_ENV.
+      # (ci-base/scripts/with-test-secrets.sh), never GITHUB_ENV. `exec`
+      # replaces this step's bash by the wrapper, which removes
+      # HARNESS_SECRETS_JSON before it executes run-tests.sh: no process above
+      # the tests keeps the JSON of all the caller secrets in its environment.
       - name: Run tests
         env:
           HARNESS_TEST_SECRETS: ${{ inputs.test_secrets }}
           HARNESS_SECRETS_JSON: ${{ inputs.test_secrets != '' && toJSON(secrets) || '' }}
-        run: |
-          mkdir -p logs
-          start=$(date +%s)
-          rc=0
-          ci-base/scripts/with-test-secrets.sh uv --project openwrt-tests run --locked pytest openwrt-tests/tests/ext -vv \
-            --durations=0 --rootdir=openwrt-tests --confcutdir=openwrt-tests \
-            --lg-env "${HARNESS_LG_ENV_FILE}" --firmware "${HARNESS_FIRMWARE}" \
-            --lg-log=logs --log-cli-level=CONSOLE --junitxml=results.xml \
-            -o junit_family=xunit1 || rc=$?
-          ci-base/scripts/summary.sh results.xml "${rc}" "$(( $(date +%s) - start ))" \
-            >> "${GITHUB_STEP_SUMMARY}"
-          exit "${rc}"
+        run: exec ci-base/scripts/with-test-secrets.sh ci-base/scripts/run-tests.sh
 
       - name: Record resolved dependencies
         if: always()

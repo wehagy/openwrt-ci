@@ -40,6 +40,11 @@ jobs:
         with:
           persist-credentials: false
 
+      # Fixed make.log fixtures: a "too big" message that numbers do not
+      # prove must fail, so no failure becomes a green expected failure.
+      - name: Outcome check self-test
+        run: scripts/image-outcome-selftest.sh
+
       - name: Validate inputs
         env:
           HARNESS_LINE: ${{ inputs.line }}

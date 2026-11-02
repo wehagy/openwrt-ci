@@ -239,10 +239,19 @@ of `harness/lines.yml`) and `package`.
   only prints `WARNING: Image file ... is too big: <size> > <limit>` and
   deletes the image (`Build/check-size`); `tplink-safeloader` refuses earlier
   with `file-system partition too big (more than <limit> bytes)` and the
-  warning then has no size. `scripts/check-image-outcome.sh` compares that
-  result with the profile's `expect` key of `harness/images.yml`:
+  warning then has an empty size. That empty-size warning is printed whenever
+  the image file does not exist, whatever removed it (`include/image-commands.mk`:
+  `... && mv $@.new $@ || rm -f $@`), so it proves nothing.
+  `scripts/check-image-outcome.sh` accepts "too big" only with numbers: a
+  `check-size` message with `<size>` > `<limit>`, or a `partition too big`
+  message with the size of `root.squashfs` (`rootfs-bytes`, the `dd` "bytes
+  copied" line before the message) > `<limit>`. Any "too big" message that is
+  not proven so (size not above the limit, root filesystem not above the
+  partition, no root filesystem size) or only empty-size warnings: the job
+  fails ("not proven by numbers"). The proven result is compared with the
+  profile's `expect` key of `harness/images.yml`:
 
-  | `expect`          | Image builds | Image too big                                  |
+  | `expect`          | Image builds | Image too big (proven)                         |
   |-------------------|--------------|------------------------------------------------|
   | absent (default)  | job green    | job fails, message and sizes quoted            |
   | `too-big`         | job fails: "now fits", remove the key | job green, no artifact |
@@ -250,8 +259,19 @@ of `harness/lines.yml`) and `package`.
   `tplink-archer-c7-v4` and `totolink-x5000r` (16 MB flash) are `expect:
   too-big`. The summary of such a job quotes the Image Builder messages with
   the actual and limit bytes (for the TP-Link, the root filesystem against its
-  partition, because the warning has no size). Any other failure (make error,
-  missing package, wrong manifest) fails the job in both cases.
+  partition, because the warning has no size).
+  - Failures: a `make` error or a missing `.apk` fails the Image Builder step
+    in both cases. A profile with `expect: too-big` that is proven too big
+    skips the manifest check (`scripts/collect-images.sh`) and the artifact
+    because no image exists, so a wrong manifest or a missing package in such
+    a profile is not detected.
+  - `scripts/image-outcome-selftest.sh` (step "Outcome check self-test" of the
+    `profiles` job in `images.yml`) runs `check-image-outcome.sh` on fixed
+    `make.log` fixtures: the empty-size warning alone, `10 > 20`, a
+    `partition too big` without or with a smaller root filesystem must fail;
+    the real `totolink-x5000r` and `tplink-archer-c7-v4` messages are a green
+    too big; a fitting image and a fitting `expect: too-big` profile ("now
+    fits") are checked too.
 - The job summary (`scripts/image-summary.sh`) lists profile, Image Builder
   image and digest, size and pull time, `setup.sh` and `make image` durations,
   the expectation and outcome, the manifest check, every artifact file with

@@ -21,7 +21,7 @@ export LINE
 targets_file=${HARNESS_DIR:-${script_dir}/../harness}/targets.yml
 
 targets=$(yq -o=json -I=0 \
-	'[.targets | to_entries | .[] | select(.value.images[strenv(LINE)] != null and (strenv(LINE) == "main" or .key == "malta-be")) | .key]' \
+	'[.targets | to_entries | .[] | select(.value.images[strenv(LINE)] != null) | .key]' \
 	"${targets_file}") || die "yq failed on ${targets_file}"
 [ "${targets}" != '[]' ] || die "no target has an image for line ${LINE}"
 

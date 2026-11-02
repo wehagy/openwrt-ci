@@ -20,7 +20,6 @@ LINE=$1
 export LINE
 targets_file=${HARNESS_DIR:-${script_dir}/../harness}/targets.yml
 
-[ "${HARNESS_MUTATION:-}" != matrix ] || targets_file=/nonexistent/targets.yml
 targets=$(yq -o=json -I=0 \
 	'[.targets | to_entries | .[] | select(.value.images[strenv(LINE)] != null) | .key]' \
 	"${targets_file}") || die "yq failed on ${targets_file}"

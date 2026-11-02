@@ -58,7 +58,6 @@ jobs:
         id: matrix
         env:
           LINE: ${{ inputs.line }}
-          HARNESS_MUTATION: matrix
         run: scripts/matrix.sh "${LINE}" | tee -a "${GITHUB_OUTPUT}"
 
       # Fail here, not later in the qemu job's fromJSON, if no matrix was set.

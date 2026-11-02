@@ -282,3 +282,81 @@ check_secret_names() {
 	[ "${csn_count}" -ge 1 ] || die "no secret name in the list"
 	[ "${csn_count}" -le 32 ] || die "too many secret names (at most 32)"
 }
+
+# Abort unless the argument is a GitHub repository, <owner>/<name>: owner
+# [A-Za-z0-9-] (at most 39 chars, no leading -), name [A-Za-z0-9._-] (at most
+# 100 chars, no leading -, not "." or "..", not ending in ".git"). The value
+# is never echoed (see check_package_name).
+#
+# Arguments:
+#   $1  repository
+check_feed_repository() {
+	case "$1" in
+	*/*/* | */ | /* | '') die "invalid feed repository (allowed: <owner>/<name>)" ;;
+	*/*) ;;
+	*) die "invalid feed repository (allowed: <owner>/<name>)" ;;
+	esac
+	cfr_owner=${1%%/*}
+	cfr_name=${1#*/}
+	case "${cfr_owner}" in
+	*[!A-Za-z0-9-]* | -*) die "invalid feed repository owner (allowed: [A-Za-z0-9][A-Za-z0-9-]*)" ;;
+	*) ;;
+	esac
+	case "${cfr_name}" in
+	*[!A-Za-z0-9._-]* | -* | . | ..) die "invalid feed repository name (allowed: [A-Za-z0-9._-]+, not . or ..)" ;;
+	*) ;;
+	esac
+	[ "${#cfr_owner}" -le 39 ] || die "invalid feed repository owner (longer than 39 chars)"
+	[ "${#cfr_name}" -le 100 ] || die "invalid feed repository name (longer than 100 chars)"
+	cfr_lower=$(printf '%s' "${cfr_name}" | tr '[:upper:]' '[:lower:]')
+	case "${cfr_lower}" in
+	*.git) die "invalid feed repository name (ends in .git)" ;;
+	*) ;;
+	esac
+}
+
+# Abort unless the argument is a feed ref: a branch, a tag, a full commit SHA
+# or refs/pull/<n>/head. Other refs/ names are refused. Otherwise
+# [A-Za-z0-9._/+-], at most 200 chars, no leading - (git could read it as an
+# option), no ".." anywhere, no leading, trailing or doubled slash, no
+# component starting with "." and no ".lock" or "." ending. The value is never
+# echoed (see check_package_name).
+#
+# Arguments:
+#   $1  ref
+check_feed_ref() {
+	case "$1" in
+	refs/pull/*/head)
+		cfref_n=${1#refs/pull/}
+		cfref_n=${cfref_n%/head}
+		case "${cfref_n}" in
+		*[!0-9]* | '') die "invalid feed ref (pull request number must be digits)" ;;
+		*) ;;
+		esac
+		[ "${#cfref_n}" -le 9 ] || die "invalid feed ref (pull request number too long)"
+		return 0
+		;;
+	refs/*) die "invalid feed ref (only refs/pull/<n>/head is accepted under refs/)" ;;
+	*) ;;
+	esac
+	case "$1" in
+	*[!A-Za-z0-9._/+-]* | '') die "invalid feed ref (allowed: [A-Za-z0-9._/+-]+)" ;;
+	-*) die "invalid feed ref (must not start with -)" ;;
+	*..* | /* | */ | *//* | .* | */.* | *. | *.lock) die "invalid feed ref (not a valid git ref name)" ;;
+	*) ;;
+	esac
+	[ "${#1}" -le 200 ] || die "invalid feed ref (longer than 200 chars)"
+}
+
+# Abort unless the argument is a full commit SHA: 40 lowercase hex digits. The
+# value is never echoed (see check_package_name).
+#
+# Arguments:
+#   $1  SHA
+check_commit_sha() {
+	case "$1" in
+	*[!0-9a-f]* | '') die "invalid commit SHA (allowed: 40 lowercase hex digits)" ;;
+	*) ;;
+	esac
+	[ "${#1}" -eq 40 ] || die "invalid commit SHA (allowed: 40 lowercase hex digits)"
+}

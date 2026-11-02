@@ -1,6 +1,8 @@
 # Reusable workflow: build one package for the 5 architectures of a line with
 # the OpenWrt SDK (openwrt/gh-action-sdk, as the openwrt/packages CI does) from
-# the openwrt/packages branch of that line, and upload the .apk.
+# a package tree, and upload the .apk. By default the tree is the openwrt/packages
+# branch of the line; feed_repository and feed_ref select another one (a branch
+# or commit of a test repository, a pull request of openwrt/packages).
 #
 # The SDK comes from the harness image ghcr.io/<owner>/openwrt-sdk:<arch>-<tag>,
 # derived from the official snapshot SDK container with setup.sh already run
@@ -36,6 +38,21 @@ on:
         type: string
         required: false
         default: ghcr.io/wehagy/openwrt-sdk
+      feed_repository:
+        description: >-
+          GitHub repository of the package tree to build from, <owner>/<name>
+          (public). Empty or openwrt/packages: the upstream feed.
+        type: string
+        required: false
+        default: openwrt/packages
+      feed_ref:
+        description: >-
+          Ref of feed_repository to build: a branch, a tag, a full commit SHA or
+          refs/pull/<n>/head. Empty: the packages_branch of the line in
+          harness/lines.yml (openwrt-25.12 or master).
+        type: string
+        required: false
+        default: ""
       ci_ref:
         description: >-
           Ref (branch, tag or commit) of wehagy/openwrt-ci the scripts, harness data
@@ -44,6 +61,17 @@ on:
         type: string
         required: false
         default: main
+
+    outputs:
+      feed_repository:
+        description: Repository the package tree was built from
+        value: ${{ jobs.feed.outputs.repository }}
+      feed_ref:
+        description: Ref that was requested (the line's default when none was given)
+        value: ${{ jobs.feed.outputs.ref }}
+      feed_sha:
+        description: Full commit SHA of the package tree that was built
+        value: ${{ jobs.feed.outputs.sha }}
 
 permissions:
   contents: read
@@ -58,6 +86,67 @@ env:
   HARNESS_CI_REPOSITORY: wehagy/openwrt-ci
 
 jobs:
+  # Validates the feed source and resolves it to one commit, once for the whole
+  # run: the architecture jobs below check out that SHA, so a branch that moves
+  # during the run cannot give two architectures different trees. The outputs
+  # are the workflow's feed_repository, feed_ref and feed_sha. It runs before
+  # sdk-image so that an invalid input fails before any image is rebuilt.
+  feed:
+    name: feed ${{ inputs.line }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash # adds pipefail
+    outputs:
+      repository: ${{ steps.record.outputs.repository }}
+      ref: ${{ steps.record.outputs.ref }}
+      sha: ${{ steps.record.outputs.sha }}
+    steps:
+      # The harness (scripts/, harness/, docker/) is checked out explicitly: a
+      # reusable workflow runs in the caller's context, so a plain checkout
+      # would fetch the calling repository. Everything runs from ci-base/.
+      - name: Check out the harness
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ env.HARNESS_CI_REPOSITORY }}
+          ref: ${{ inputs.ci_ref }}
+          path: ci-base
+          persist-credentials: false
+
+      - name: Report revisions
+        env:
+          HARNESS_CI_REF: ${{ inputs.ci_ref }}
+        run: ci-base/scripts/report-revisions.sh
+
+      - name: Feed source self-test
+        run: ci-base/scripts/feed-inputs-selftest.sh
+
+      # Validates the inputs; the output is written to $GITHUB_ENV only when
+      # the script succeeded.
+      - name: Resolve the feed source
+        env:
+          LINE: ${{ inputs.line }}
+          FEED_REPOSITORY: ${{ inputs.feed_repository }}
+          FEED_REF: ${{ inputs.feed_ref }}
+        run: |
+          resolved=$(ci-base/scripts/resolve-feed.sh "${LINE}" "${FEED_REPOSITORY}" "${FEED_REF}")
+          echo "${resolved}" | tee -a "${GITHUB_ENV}"
+
+      - name: Check out the feed
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ env.HARNESS_PACKAGES_REPOSITORY }}
+          ref: ${{ env.HARNESS_PACKAGES_REF }}
+          path: packages-feed
+          persist-credentials: false
+
+      - name: Record the feed commit
+        id: record
+        run: |
+          ci-base/scripts/feed-record.sh packages-feed | tee -a "${GITHUB_OUTPUT}"
+          ci-base/scripts/feed-record.sh --summary packages-feed >> "${GITHUB_STEP_SUMMARY}"
+
   # No `concurrency` group: GitHub keeps one running and one pending job per
   # group and cancels the older pending one, which would cancel the build of a
   # run whenever 3 runs (or the packages of the next slice) need the same
@@ -66,6 +155,7 @@ jobs:
   # pushed a fresh image meanwhile; it keeps the superseded image as
   # <tag>-prev, so an in-flight build that pinned it keeps working.
   sdk-image:
+    needs: feed
     name: sdk-image ${{ inputs.line }} ${{ matrix.arch }}
     runs-on: ubuntu-26.04
     timeout-minutes: 45
@@ -117,7 +207,7 @@ jobs:
         run: ci-base/scripts/sdk-image-ensure.sh
 
   sdk:
-    needs: sdk-image
+    needs: [feed, sdk-image]
     name: ${{ inputs.line }} ${{ matrix.arch }}
     runs-on: ubuntu-26.04
     timeout-minutes: 45
@@ -150,21 +240,26 @@ jobs:
 
       # Validates the inputs; the output is written to $GITHUB_ENV only when
       # the script succeeded.
-      - name: Resolve line, arch and package
+      - name: Resolve line, arch, package and feed
         env:
           LINE: ${{ inputs.line }}
           ARCH: ${{ matrix.arch }}
           PACKAGE: ${{ inputs.package }}
+          FEED_REPOSITORY: ${{ needs.feed.outputs.repository }}
+          FEED_REF: ${{ needs.feed.outputs.ref }}
+          FEED_SHA: ${{ needs.feed.outputs.sha }}
         run: |
-          resolved=$(ci-base/scripts/resolve-build.sh "${LINE}" "${ARCH}" "${PACKAGE}")
+          resolved=$(ci-base/scripts/resolve-build.sh "${LINE}" "${ARCH}" "${PACKAGE}" \
+            "${FEED_REPOSITORY}" "${FEED_REF}" "${FEED_SHA}")
           echo "${resolved}" | tee -a "${GITHUB_ENV}"
 
       # A full tree, not just the package: Go packages include
-      # ../../lang/golang/golang-package.mk by relative path.
+      # ../../lang/golang/golang-package.mk by relative path. The commit is
+      # the one the feed job resolved, the same for every architecture.
       - uses: actions/checkout@v7.0.1
         with:
-          repository: openwrt/packages
-          ref: ${{ env.HARNESS_PACKAGES_BRANCH }}
+          repository: ${{ env.HARNESS_PACKAGES_REPOSITORY }}
+          ref: ${{ env.HARNESS_PACKAGES_SHA }}
           path: packages-feed
           persist-credentials: false
 
@@ -176,15 +271,16 @@ jobs:
           info=$(ci-base/scripts/sdk-image-info.sh)
           echo "${info}" | tee -a "${GITHUB_ENV}"
 
-      - name: Record feed commit and build start
+      - name: Check the feed commit and record the build start
         run: |
           sha=$(git -C packages-feed rev-parse HEAD)
+          if [ "${sha}" != "${HARNESS_PACKAGES_SHA}" ]; then
+            echo "::error::feed checkout is at ${sha}, expected ${HARNESS_PACKAGES_SHA}"
+            exit 1
+          fi
           start=$(date +%s)
           mkdir -p "${SDK_OUT}"
-          {
-            echo "HARNESS_PACKAGES_SHA=${sha}"
-            echo "HARNESS_BUILD_START=${start}"
-          } >> "${GITHUB_ENV}"
+          echo "HARNESS_BUILD_START=${start}" >> "${GITHUB_ENV}"
 
       # Pinned to a commit of the action's main branch.
       - uses: openwrt/gh-action-sdk@f5813d30eeef3534b58ac7e79c5d8842b6035434

@@ -1,6 +1,7 @@
 #!/usr/bin/env sh
 # Responsibility: print the Markdown job summary of one SDK build job (line,
-# arch, SDK image, packages feed commit, package version, duration).
+# arch, SDK image, feed source: repository, ref and commit; package version,
+# duration).
 #
 # Usage:
 #   scripts/build-summary.sh >> "$GITHUB_STEP_SUMMARY"
@@ -10,7 +11,8 @@
 #   HARNESS_LINE, HARNESS_ARCH, HARNESS_SDK_IMAGE, HARNESS_SDK_DIGEST,
 #   HARNESS_SDK_CREATED, HARNESS_SDK_ARCHIVE, HARNESS_SDK_ARCHIVE_SHA256,
 #   HARNESS_SDK_PIN, HARNESS_SDK_STATE (scripts/sdk-image-info.sh),
-#   HARNESS_PACKAGES_BRANCH, HARNESS_PACKAGES_SHA, HARNESS_PACKAGE,
+#   HARNESS_PACKAGES_REPOSITORY, HARNESS_PACKAGES_REF, HARNESS_PACKAGES_SHA,
+#   HARNESS_PACKAGE,
 #   HARNESS_PACKAGE_VERSION, HARNESS_APK_FILE, HARNESS_BUILD_SECONDS
 
 set -eu
@@ -29,7 +31,8 @@ sdk_archive=${HARNESS_SDK_ARCHIVE:?HARNESS_SDK_ARCHIVE is required}
 sdk_archive_sha=${HARNESS_SDK_ARCHIVE_SHA256:?HARNESS_SDK_ARCHIVE_SHA256 is required}
 sdk_pin=${HARNESS_SDK_PIN:?HARNESS_SDK_PIN is required}
 sdk_state=${HARNESS_SDK_STATE:?HARNESS_SDK_STATE is required}
-packages_branch=${HARNESS_PACKAGES_BRANCH:?HARNESS_PACKAGES_BRANCH is required}
+packages_repository=${HARNESS_PACKAGES_REPOSITORY:?HARNESS_PACKAGES_REPOSITORY is required}
+packages_ref=${HARNESS_PACKAGES_REF:?HARNESS_PACKAGES_REF is required}
 packages_sha=${HARNESS_PACKAGES_SHA:?HARNESS_PACKAGES_SHA is required}
 package=${HARNESS_PACKAGE:?HARNESS_PACKAGE is required}
 version=${HARNESS_PACKAGE_VERSION:?HARNESS_PACKAGE_VERSION is required}
@@ -42,7 +45,7 @@ printf -- '- arch: %s\n' "${arch}"
 printf -- '- SDK image: %s (%s), built from %s\n' "${sdk_image}" "${sdk_digest}" "${sdk_pin}"
 printf -- '- SDK image state: %s, created %s\n' "${sdk_state}" "${sdk_created}"
 printf -- '- SDK archive: %s (sha256 %s)\n' "${sdk_archive}" "${sdk_archive_sha}"
-printf -- '- packages feed: openwrt/packages %s @ %s\n' \
-	"${packages_branch}" "${packages_sha}"
+printf -- '- packages feed: %s %s @ %s\n' \
+	"${packages_repository}" "${packages_ref}" "${packages_sha}"
 printf -- '- package: %s %s (%s)\n' "${package}" "${version}" "${apk_file}"
 printf -- '- build duration: %s s\n' "${seconds}"

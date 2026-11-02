@@ -41,7 +41,8 @@ which calls the workflows below.
 - `scripts/` (POSIX shell, used by the workflows)
   - SDK image: `resolve-sdk.sh`, `sdk-age-selftest.sh`,
     `sdk-image-ensure.sh`, `sdk-image-info.sh`.
-  - Build: `resolve-build.sh`, `collect-apk.sh`, `build-summary.sh`.
+  - Build: `resolve-build.sh`, `collect-apk.sh`, `build-summary.sh`; feed
+    source: `resolve-feed.sh`, `feed-record.sh`, `feed-inputs-selftest.sh`.
   - Test: `validate-inputs.sh`, `caller-inputs-selftest.sh`, `matrix.sh`,
     `resolve.sh`, `fetch-image.sh`, `fetch-package.sh`, `prepare-target.sh`,
     `run-tests.sh`, `summary.sh`.
@@ -49,7 +50,8 @@ which calls the workflows below.
     `imagebuilder-make.sh` (runs inside the Image Builder container) with
     `ib-setup.sh` and `ib-setup-selftest.sh`,
     `check-image-outcome.sh`, `collect-images.sh`, `image-summary.sh`.
-  - `lib/common.sh`: shared helpers. `lib/ghcr.sh` (registry reads),
+  - `lib/common.sh`: shared helpers. `lib/selftest.sh` (case bookkeeping of
+    the self-tests), `lib/ghcr.sh` (registry reads),
     `lib/sdk-age.sh` (age rule and reuse/rebuild decision),
     `lib/sdk-labels.sh` (image label keys).
 - `docker/sdk-image/Dockerfile`: derives the SDK image from the official one.
@@ -223,12 +225,13 @@ Inputs (`line` and `package` required):
 
 Optional inputs: `refresh_sdk` (boolean, default `false`): rebuild the SDK
 images of the line even when they are fresh; `sdk_container` (see above);
-`ci_ref` (see above).
+`feed_repository` and `feed_ref` (see "Feed source"); `ci_ref` (see above).
+Outputs: `feed_repository`, `feed_ref` and `feed_sha` (see "Feed source").
 
 The caller must grant `packages: write` to the job that calls `build.yml`
 (`ci.yml` does); the workflow itself needs it only in `sdk-image`.
 
-- Two jobs, each one per architecture: `x86_64`, `aarch64_generic`,
+- Three jobs, `feed` once and the other two per architecture: `x86_64`, `aarch64_generic`,
   `aarch64_cortex-a53`, `mipsel_24kc`, `mips_24kc` (`fail-fast: false`).
   `sdk` (the build) needs `sdk-image`, which waits for all five architectures.
 - The SDK image repository is named once, by the workflow `env`
@@ -247,8 +250,8 @@ The caller must grant `packages: write` to the job that calls `build.yml`
     (`docker/sdk-image/Dockerfile`). `openwrt/gh-action-sdk` builds from it
     (`CONTAINER` and `ARCH`), so its entrypoint finds no `setup.sh` and skips
     the download.
-  - Feed branch of `openwrt/packages`: `openwrt-25.12` for `25.12`, `master`
-    for `main`.
+  - Default feed ref of `openwrt/packages`: `openwrt-25.12` for `25.12`,
+    `master` for `main` (the `packages_branch` key).
 - Job `sdk-image` (`scripts/sdk-image-ensure.sh`), lazy refresh per (line,
   arch):
   - Starts with `scripts/sdk-age-selftest.sh`: fixed timestamps prove the age
@@ -299,17 +302,53 @@ The caller must grant `packages: write` to the job that calls `build.yml`
   `openwrt/gh-action-sdk` builds `FROM $CONTAINER:$ARCH` with `ARCH` set to
   the pin, so the build reads exactly the digest of the summary even if
   another run moves the tag meanwhile.
-- The full `openwrt/packages` tree is checked out (Go packages include
-  `lang/golang` by relative path), then built with `openwrt/gh-action-sdk`
-  pinned to commit `f5813d30`.
+- The full feed tree is checked out (Go packages include `lang/golang` by
+  relative path; by default `openwrt/packages`, see "Feed source"), then built
+  with `openwrt/gh-action-sdk` pinned to commit `f5813d30`.
 - `scripts/collect-apk.sh` takes the one `<package>-<version>.apk` of the SDK
   output (none or several fail the job).
 - The job summary (`scripts/build-summary.sh`) lists line, arch, SDK image and
   digest and pin, its state (`reused` or `rebuilt`), creation date, SDK archive and
-  sha256, `openwrt/packages` branch and commit, package version and build
+  sha256, feed repository, ref and commit, package version and build
   duration. The `sdk-image` job summary records the decision and, for a
   rebuild, the deleted version.
 - Artifact: `apk-<package>-<line>-<arch>` (the `.apk` alone).
+
+### Feed source (`feed_repository`, `feed_ref`)
+
+By default a build uses the branch of `openwrt/packages` named by the line
+(`packages_branch`). A caller that builds another tree (a version bump pushed to
+a test repository, an upstream pull request) passes:
+
+| Input             | Meaning                         | Accepted                                                |
+|-------------------|---------------------------------|---------------------------------------------------------|
+| `feed_repository` | public GitHub repository        | `<owner>/<name>`; owner `[A-Za-z0-9-]` (<= 39, no leading `-`), name `[A-Za-z0-9._-]` (<= 100, no leading `-`, not `.`, `..` or `*.git`); default `openwrt/packages` |
+| `feed_ref`        | what to build in that repository | a branch, a tag, a full commit SHA or `refs/pull/<n>/head` (<= 9 digits); empty: the line's `packages_branch` |
+
+- Both values are validated by `scripts/resolve-feed.sh` (`check_feed_repository`
+  and `check_feed_ref` of `lib/common.sh`) before anything is written to
+  `$GITHUB_ENV`; nothing is echoed. A ref is `[A-Za-z0-9._/+-]`, at most 200
+  characters, with no `..`, no leading `-`, no leading, trailing or doubled `/`,
+  no component starting with `.`, no `.lock` or `.` ending; any other `refs/`
+  name is refused.
+- The job `feed` runs first (it also gates `sdk-image`, so an invalid input
+  fails before an SDK image is rebuilt). It checks the feed out, reads the
+  commit (`scripts/feed-record.sh`) and exposes it as the workflow outputs
+  `feed_repository`, `feed_ref` and `feed_sha`; its job summary has the
+  section `feed source` with the three values. The `sdk` jobs check out
+  that SHA, so the five architectures build one tree even if the branch moves
+  during the run, and fail if the checkout is not at that SHA.
+- The summary of each `sdk` job has `packages feed: <repository> <ref> @ <sha>`.
+- A caller reads the outputs with `needs.build.outputs.feed_sha` etc.
+- `images.yml` and `test.yml` do not read the feed: they use the `.apk` of the
+  build artifact and the release or snapshot feed of OpenWrt, so they need no
+  change.
+- Tests: `scripts/feed-inputs-selftest.sh` (step "Feed source self-test" of the
+  `feed` job, run by every caller) covers the validators, `resolve-feed.sh`,
+  `resolve-build.sh` and `feed-record.sh` with fixed inputs, including values
+  that must be refused (`..`, leading `-`, other `refs/` names, a newline, a
+  forged `::error::` line) and the defaults of both lines. It needs `yq` and
+  `git`.
 
 ## Reusable workflow `test.yml`
 
@@ -539,8 +578,9 @@ Packages are added in the calling repository
   `tests_path`; they do not exist yet.
 - Build images with the package: call `images.yml` with the same `line` and
   `package`, `needs:` the build job.
-- Packages outside `openwrt/packages` (local feeds, upstream PRs) are not
-  supported yet.
+- Package trees other than the line's branch of `openwrt/packages` (a test
+  repository, an upstream pull request): `feed_repository` and `feed_ref` (see
+  "Feed source"). Local feeds of the calling repository are not supported.
 
 ## Pinned test environment
 

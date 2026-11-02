@@ -1,4 +1,4 @@
-# Reusable workflow: build one package for the 5 architectures of a line with
+# Reusable workflow: build one package for the architectures of a line with
 # the OpenWrt SDK (openwrt/gh-action-sdk, as the openwrt/packages CI does) from
 # a package tree, and upload the .apk. By default the tree is the openwrt/packages
 # branch of the line; feed_repository and feed_ref select another one (a branch
@@ -38,6 +38,24 @@ on:
         type: string
         required: false
         default: ghcr.io/wehagy/openwrt-sdk
+      archs:
+        description: >-
+          Package architectures to build, separated by spaces or newlines:
+          literal names (e.g. x86_64), @tests (the architectures of the QEMU
+          test targets of harness/targets.yml) and @profiles (the
+          architectures of the profiles input). A new architecture gets its
+          SDK image from the sdk-image job on first use.
+        type: string
+        required: false
+        default: "@tests @profiles"
+      profiles:
+        description: >-
+          Image profiles whose architectures @profiles adds (same format as
+          the profiles input of images.yml, checked against profiles.json of
+          the line). Empty: the profile of the base's own CI.
+        type: string
+        required: false
+        default: ""
       feed_repository:
         description: >-
           GitHub repository of the package tree to build from, <owner>/<name>
@@ -99,6 +117,7 @@ jobs:
       run:
         shell: bash # adds pipefail
     outputs:
+      archs: ${{ steps.archs.outputs.matrix }}
       repository: ${{ steps.record.outputs.repository }}
       ref: ${{ steps.record.outputs.ref }}
       sha: ${{ steps.record.outputs.sha }}
@@ -121,6 +140,23 @@ jobs:
 
       - name: Feed source self-test
         run: ci-base/scripts/feed-inputs-selftest.sh
+
+      - name: Image inputs self-test
+        run: ci-base/scripts/image-inputs-selftest.sh
+
+      # The architecture matrix of sdk-image and sdk. A profile that does not
+      # exist fails here, before an SDK image is rebuilt.
+      - name: Resolve the architectures
+        id: archs
+        env:
+          LINE: ${{ inputs.line }}
+          HARNESS_ARCHS: ${{ inputs.archs }}
+          HARNESS_PROFILES: ${{ inputs.profiles }}
+        run: |
+          resolved=$(ci-base/scripts/resolve-archs.sh "${LINE}")
+          echo "${resolved}" | tee -a "${GITHUB_OUTPUT}"
+          echo "### architectures" | tee -a "${GITHUB_STEP_SUMMARY}"
+          echo "- $(echo "${resolved}" | sed -n -e 's/^archs=//p')" | tee -a "${GITHUB_STEP_SUMMARY}"
 
       # Validates the inputs; the output is written to $GITHUB_ENV only when
       # the script succeeded.
@@ -164,8 +200,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        arch: [x86_64, aarch64_generic, aarch64_cortex-a53, mipsel_24kc, mips_24kc]
+      matrix: ${{ fromJSON(needs.feed.outputs.archs) }}
     defaults:
       run:
         shell: bash # adds pipefail
@@ -213,8 +248,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix:
-        arch: [x86_64, aarch64_generic, aarch64_cortex-a53, mipsel_24kc, mips_24kc]
+      matrix: ${{ fromJSON(needs.feed.outputs.archs) }}
     defaults:
       run:
         shell: bash # adds pipefail, so `script | tee` keeps the script's status

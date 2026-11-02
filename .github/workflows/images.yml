@@ -1,6 +1,9 @@
 # Reusable workflow: build firmware images with the official OpenWrt
-# ImageBuilder, one job per profile of harness/images.yml, with the package
-# built by build.yml (artifact apk-<package>-<line>-<arch>) installed in each.
+# ImageBuilder, one job per profile of the `profiles` input, with the package
+# built by build.yml (artifact apk-<package>-<line>-<arch>) installed in each
+# when there is one. The image choices (profiles, extra packages) belong to
+# the caller; the profiles are checked against the official profiles.json of
+# the line before any job starts.
 name: images
 
 on:
@@ -13,9 +16,30 @@ on:
       package:
         description: >-
           Package name; its apk-<package>-<line>-<arch> artifacts from
-          build.yml in the same workflow run are installed in the images
+          build.yml in the same workflow run are installed in the images.
+          Empty: images without a package of their own.
         type: string
-        required: true
+        required: false
+        default: ""
+      profiles:
+        description: >-
+          Image profiles, separated by spaces or newlines, each
+          <target>/<subtarget>/<profile> (e.g. mediatek/filogic/bananapi_bpi-r3),
+          optionally followed by :too-big for an image known not to fit the
+          flash. Checked against profiles.json of the line; the package
+          architecture is read from it. Empty: the profile of the base's own
+          CI (profiles in harness/images.yml).
+        type: string
+        required: false
+        default: ""
+      packages:
+        description: >-
+          Packages added to every image next to the built package, separated
+          by spaces or newlines; -<name> removes one (Image Builder PACKAGES
+          syntax, e.g. "-dnsmasq dnsmasq-full"). Empty: none.
+        type: string
+        required: false
+        default: ""
       ci_ref:
         description: >-
           Ref (branch, tag or commit) of wehagy/openwrt-ci the scripts, harness data
@@ -40,7 +64,7 @@ env:
   HARNESS_CI_REPOSITORY: wehagy/openwrt-ci
 
 jobs:
-  # The profiles come from harness/images.yml, not from this file.
+  # The profiles come from the `profiles` input, resolved against profiles.json.
   profiles:
     name: profiles ${{ inputs.line }}
     runs-on: ubuntu-26.04
@@ -74,16 +98,35 @@ jobs:
       - name: Image Builder setup self-test
         run: ci-base/scripts/ib-setup-selftest.sh
 
+      # Validators and resolution of the image inputs, with fixed inputs and
+      # a fake mirror (no network).
+      - name: Image inputs self-test
+        run: ci-base/scripts/image-inputs-selftest.sh
+
       - name: Validate inputs
+        if: ${{ inputs.package != '' }}
         env:
           HARNESS_LINE: ${{ inputs.line }}
           HARNESS_PACKAGE: ${{ inputs.package }}
           HARNESS_SOURCE: artifact
         run: ci-base/scripts/validate-inputs.sh
 
+      - name: Validate the packages input
+        env:
+          IMAGE_PACKAGES: ${{ inputs.packages }}
+        run: |
+          . ci-base/scripts/lib/common.sh
+          . ci-base/scripts/lib/image-inputs.sh
+          check_image_packages "${IMAGE_PACKAGES}"
+
+      # Every profile is looked up in the profiles.json of the line: an
+      # unknown target or profile fails here, before any image job.
       - name: Build matrix
         id: matrix
-        run: ci-base/scripts/image-matrix.sh | tee -a "${GITHUB_OUTPUT}"
+        env:
+          LINE: ${{ inputs.line }}
+          HARNESS_PROFILES: ${{ inputs.profiles }}
+        run: ci-base/scripts/resolve-profiles.sh "${LINE}" | tee -a "${GITHUB_OUTPUT}"
 
       # Fail here, not later in the image job's fromJSON, if no matrix was set.
       - name: Check matrix
@@ -131,16 +174,24 @@ jobs:
           LINE: ${{ inputs.line }}
           PROFILE_ID: ${{ matrix.profile }}
           PACKAGE: ${{ inputs.package }}
+          HARNESS_IMAGE_TARGET: ${{ matrix.target }}
+          HARNESS_IMAGE_SUBTARGET: ${{ matrix.subtarget }}
+          HARNESS_IMAGE_DEVICE: ${{ matrix.device }}
+          HARNESS_IMAGE_ARCH: ${{ matrix.arch }}
+          HARNESS_IMAGE_EXPECT: ${{ matrix.expect }}
+          HARNESS_IMAGE_PACKAGES: ${{ inputs.packages }}
         run: |
           resolved=$(ci-base/scripts/resolve-image.sh "${LINE}" "${PROFILE_ID}" "${PACKAGE}")
           echo "${resolved}" | tee -a "${GITHUB_ENV}"
 
       - uses: actions/download-artifact@v8.0.2
+        if: ${{ inputs.package != '' }}
         with:
           name: apk-${{ env.HARNESS_PACKAGE }}-${{ inputs.line }}-${{ env.HARNESS_ARCH }}
           path: ${{ env.APK_IN }}
 
       - name: Record the package version
+        if: ${{ inputs.package != '' }}
         run: |
           . ci-base/scripts/lib/common.sh
           apk=$(find_apk "${APK_IN}" "${HARNESS_PACKAGE}")
@@ -163,9 +214,9 @@ jobs:
             --volume "${IB_OUT}:/harness/out" \
             "${HARNESS_IB_IMAGE}" sh /harness/scripts/imagebuilder-make.sh
 
-      # Passes only when the result is the declared one (expect: in
-      # harness/images.yml): an image that fits, or the Image Builder's "too
-      # big" for a profile expected not to fit.
+      # Passes only when the result is the declared one (:too-big on the
+      # profile): an image that fits, or the Image Builder's "too big" for a
+      # profile expected not to fit.
       - name: Check the Image Builder outcome
         run: ci-base/scripts/check-image-outcome.sh "${IB_OUT}" | tee -a "${GITHUB_ENV}"
 
@@ -184,6 +235,6 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ env.HARNESS_OUTCOME == 'fits' }}
         with:
-          name: images-${{ env.HARNESS_PACKAGE }}-${{ inputs.line }}-${{ matrix.profile }}
+          name: ${{ env.HARNESS_ARTIFACT }}
           path: ${{ env.IMAGE_OUT }}
           if-no-files-found: error

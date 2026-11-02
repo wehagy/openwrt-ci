@@ -196,9 +196,15 @@ check_bool() {
 latest_release() {
 	lr_dir=$(mktemp -d) || die "cannot create a temporary directory"
 	curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 -o "${lr_dir}/index.html" "$1" ||
-		die "cannot fetch $1"
+		{
+			rm -rf "${lr_dir}"
+			die "cannot fetch $1"
+		}
 	grep -oE "href=\"$2/\"" "${lr_dir}/index.html" >"${lr_dir}/hrefs" ||
-		die "no release $2 at $1"
+		{
+			rm -rf "${lr_dir}"
+			die "no release $2 at $1"
+		}
 	sed -e 's/^href="//' -e 's|/"$||' "${lr_dir}/hrefs" >"${lr_dir}/versions"
 	sort -V -o "${lr_dir}/sorted" "${lr_dir}/versions"
 	lr_release=$(tail -n 1 "${lr_dir}/sorted")

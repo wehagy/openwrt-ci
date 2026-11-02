@@ -55,7 +55,6 @@ artifact)
 	;;
 esac
 
-if [ "${HARNESS_LINE}" = main ]; then version=0.0.0-r0; fi
 work_abs=$(cd "${work_dir}" && pwd)
 printf 'HARNESS_PACKAGE=%s\n' "${package}"
 printf 'HARNESS_APK=%s/pkg.apk\n' "${work_abs}"

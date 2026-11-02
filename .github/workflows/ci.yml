@@ -34,27 +34,9 @@ jobs:
       package: netbird
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
 
-  build-main:
-    if: ${{ inputs.lines != '25.12' }}
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/build.yml
-    with:
-      line: main
-      package: netbird
-      refresh_sdk: ${{ inputs.refresh_sdk == true }}
-
   image-25-12:
     needs: build-25-12
     uses: ./.github/workflows/images.yml
     with:
       line: "25.12"
-      package: netbird
-
-  image-main:
-    needs: build-main
-    uses: ./.github/workflows/images.yml
-    with:
-      line: main
       package: netbird

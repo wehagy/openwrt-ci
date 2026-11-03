@@ -106,7 +106,7 @@ check_http_date() {
 }
 
 # Print the path of the one <package>-<version>.apk below a directory; no
-# match or several matches are an error (e.g. netbird-ui must not count).
+# match or several matches are an error (e.g. chrony-nts must not count).
 #
 # Arguments:
 #   $1  directory to search

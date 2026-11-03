@@ -1,4 +1,4 @@
-# Tests the harness itself: builds a sample package (netbird) for both lines,
+# Tests the harness itself: builds a sample package (chrony) for both lines,
 # tests each build in QEMU and builds its images, on every push to a feature
 # branch. Can also be started by hand to force the SDK images to be rebuilt
 # (refresh_sdk) and to build only one line. Packages of their own live in
@@ -32,9 +32,9 @@ on:
         options: [both, "25.12", main]
         default: both
       package:
-        description: Package to build (default netbird)
+        description: Package to build (default chrony)
         type: string
-        default: netbird
+        default: chrony
       feed_repository:
         description: Repository of the package tree (default openwrt/packages)
         type: string
@@ -79,7 +79,7 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: "25.12"
-      package: ${{ inputs.package || 'netbird' }}
+      package: ${{ inputs.package || 'chrony' }}
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
       feed_repository: ${{ inputs.feed_repository }}
       feed_ref: ${{ inputs.feed_ref }}
@@ -95,7 +95,7 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: main
-      package: ${{ inputs.package || 'netbird' }}
+      package: ${{ inputs.package || 'chrony' }}
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
       feed_repository: ${{ inputs.feed_repository }}
       feed_ref: ${{ inputs.feed_ref }}
@@ -109,7 +109,7 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: "25.12"
-      package: ${{ inputs.package || 'netbird' }}
+      package: ${{ inputs.package || 'chrony' }}
       source: artifact
       tests_path: harness/sample-tests
       test_secrets: SAMPLE_SECRET
@@ -125,7 +125,7 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: main
-      package: ${{ inputs.package || 'netbird' }}
+      package: ${{ inputs.package || 'chrony' }}
       source: artifact
       tests_path: harness/sample-tests
       test_secrets: SAMPLE_SECRET
@@ -140,7 +140,7 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: "25.12"
-      package: ${{ inputs.package || 'netbird' }}
+      package: ${{ inputs.package || 'chrony' }}
       profiles: ${{ inputs.profiles }}
       packages: ${{ inputs.packages || '-dnsmasq dnsmasq-full' }}
 
@@ -151,7 +151,7 @@ jobs:
     with:
       ci_ref: ${{ github.sha }}
       line: main
-      package: ${{ inputs.package || 'netbird' }}
+      package: ${{ inputs.package || 'chrony' }}
       profiles: ${{ inputs.profiles }}
       packages: ${{ inputs.packages || '-dnsmasq dnsmasq-full' }}
 

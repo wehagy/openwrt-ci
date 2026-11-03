@@ -4,7 +4,7 @@ Reusable base of an OpenWrt package CI: build a package with the official SDK,
 test it in QEMU and build firmware images with it using the official Image
 Builder. This repository holds only the base (reusable workflows, scripts,
 pinned tooling, the generic package test) and its own CI, which tests the base
-with a sample package (`netbird`). The packages themselves, their
+with a sample package (`chrony`). The packages themselves, their
 package-specific tests and the planned upstream pull request automation live in
 [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci-packages),
 which calls the workflows below.
@@ -64,7 +64,7 @@ which calls the workflows below.
   - `test.yml`: reusable QEMU test.
   - `images.yml`: reusable Image Builder build.
   - `ci.yml`: the base's own CI, calls the three workflows above for the sample
-    package `netbird` on push to `feat/**`.
+    package `chrony` on push to `feat/**`.
 - `scripts/` also has: `report-revisions.sh` (prints the harness and caller
   commits of a job), `install-tests.sh` (copies the pytest files),
   `with-test-secrets.sh` (exports the caller secrets to the tests only).
@@ -78,24 +78,24 @@ jobs:
   build:
     permissions: {contents: read, packages: write}
     uses: wehagy/openwrt-ci/.github/workflows/build.yml@main
-    with: {line: "25.12", package: netbird, ci_ref: main}
+    with: {line: "25.12", package: chrony, ci_ref: main}
   test:
     needs: build
     uses: wehagy/openwrt-ci/.github/workflows/test.yml@main
     with:
       line: "25.12"
-      package: netbird
+      package: chrony
       source: artifact
       ci_ref: main
-      tests_path: packages/netbird/tests   # optional
-      test_secrets: NB_SETUP_KEY           # optional
+      tests_path: packages/chrony/tests   # optional
+      test_secrets: EXAMPLE_KEY           # optional
     secrets: inherit                       # only with test_secrets
   image:
     needs: build
     uses: wehagy/openwrt-ci/.github/workflows/images.yml@main
     with:
       line: "25.12"
-      package: netbird
+      package: chrony
       ci_ref: main
       profiles: |                          # optional: see images.yml
         x86/64/generic
@@ -139,7 +139,7 @@ caller: <owner>/<repo> run commit <GITHUB_SHA>
 ### Package tests (`tests_path`, `test.yml`)
 
 `tests_path` is a directory of the calling repository (e.g.
-`packages/netbird/tests`). When set, only that directory is checked out
+`packages/chrony/tests`). When set, only that directory is checked out
 (`sparse-checkout`, into `caller/`) and its top-level `*.py` files are copied
 to `openwrt-tests/tests/ext/` next to the generic test, so they run in the same
 pytest session and VM (`scripts/install-tests.sh`) and can import
@@ -630,12 +630,12 @@ the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci
 
 ## Own CI `ci.yml`
 
-Tests the base with the sample package `netbird`. Every call passes
+Tests the base with the sample package `chrony`. Every call passes
 `ci_ref: ${{ github.sha }}`, the commit under test. On push to `feat/**` and on
 `workflow_dispatch`.
 Dispatch inputs: `refresh_sdk` (boolean, passed to `build.yml`) and `lines`
 (`both`, `25.12` or `main`: the other build job is skipped); `package`
-(default `netbird`), `feed_repository` and `feed_ref` (passed to `build.yml`,
+(default `chrony`), `feed_repository` and `feed_ref` (passed to `build.yml`,
 see "Feed source"); `stages` (`all`, or `build` to skip the test and image
 jobs); `profiles` and `packages` (the `profiles` and `packages` inputs; empty
 profiles: `x86/64/generic` of `harness/images.yml`; empty packages: the CI uses

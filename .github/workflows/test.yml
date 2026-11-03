@@ -31,7 +31,7 @@ on:
         default: main
       tests_path:
         description: >-
-          Directory of the calling repository (e.g. packages/netbird/tests) whose
+          Directory of the calling repository (e.g. packages/<name>/tests) whose
           *.py files run next to the generic test in the same pytest session;
           empty or missing: only the generic test runs
         type: string
@@ -40,7 +40,7 @@ on:
       test_secrets:
         description: >-
           Names of caller secrets (separated by spaces or commas, e.g.
-          NB_SETUP_KEY) exported as environment variables to the tests only.
+          EXAMPLE_KEY) exported as environment variables to the tests only.
           Needs `secrets: inherit` in the caller; a name that is not a secret
           is exported empty
         type: string

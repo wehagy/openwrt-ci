@@ -93,6 +93,7 @@ mirror_labels() {
 #
 # Arguments:
 #   $@  extra environment assignments (later ones win)
+# shellcheck disable=SC2120 # the extra assignments are optional
 run_sdk() {
 	env PATH="${work}/stubs/bin:${PATH}" STUB_STATE="${state}" STUB_SUMS="${work}/sums" \
 		STUB_BASE_DIGEST="${base_digest}" STUB_BASE_ENV="${base_env}" \
@@ -155,7 +156,7 @@ stub_state_new "${state}"
 stub_seed "${state}" acme/openwrt-sdk x86_64-main "$(sdk_labels "${old}" "${recipe_sdk}" "${sha_a}")" >/dev/null
 script_case "sdk: an up to date image is reused" 0 ANY run_sdk
 said "sdk reuse: the decision" out "decision=reuse"
-calls "sdk reuse: nothing is built" 'docker build' lacks
+calls "sdk reuse: nothing is built" 'docker build --build-arg' lacks
 calls "sdk reuse: nothing is pushed" 'buildx build' lacks
 calls "sdk reuse: no login" 'docker login' lacks
 
@@ -163,7 +164,7 @@ stub_state_new "${state}"
 stub_seed "${state}" acme/openwrt-sdk x86_64-main "$(sdk_labels "${old}" "${recipe_sdk}" "${sha_a}")" >/dev/null
 script_case "sdk: force rebuilds an up to date image created before the run" 0 ANY run_sdk HARNESS_FORCE=true
 said "sdk force: the decision" out "forced refresh requested"
-calls "sdk force: it is built" 'docker build' has
+calls "sdk force: it is built" 'docker build --build-arg' has
 calls "sdk force: it is pushed" 'buildx build' has
 
 stub_state_new "${state}"
@@ -207,13 +208,14 @@ calls "sdk archive name: nothing is pushed" 'buildx build' lacks
 
 # Another job pushed the same image while this one built: discard the build.
 stub_state_new "${state}"
+# shellcheck disable=SC2119 # no extra assignment here
 run_sdk >"${work}/won.log" 2>&1 || die "the first run of the race case failed: $(cat "${work}/won.log")"
 rm -rf "${work}/won"
 cp -R "${state}" "${work}/won"
 stub_state_new "${state}"
 script_case "sdk: an identical image pushed meanwhile is not pushed again" 0 ANY run_sdk STUB_RACE_FROM="${work}/won"
 said "sdk re-check: the build is discarded" out "another job pushed"
-calls "sdk re-check: it did build" 'docker build' has
+calls "sdk re-check: it did build" 'docker build --build-arg' has
 calls "sdk re-check: it does not push" 'buildx build' lacks
 
 stub_state_new "${state}"
@@ -223,12 +225,12 @@ said "sdk denied: the reason" err "write access to the package missing"
 
 stub_state_new "${state}"
 script_case "sdk: the checksums that cannot be downloaded fail" 1 ANY run_sdk STUB_SUMS_FAIL=1
-calls "sdk sums: nothing is built" 'docker build' lacks
+calls "sdk sums: nothing is built" 'docker build --build-arg' lacks
 
 # --- Image Builder image of a release line (mode mirror) ----------------------
 stub_state_new "${state}"
 script_case "mirror: a missing image is copied and pushed" 0 ANY run_mirror
-calls "mirror missing: nothing is built" 'docker build' lacks
+calls "mirror missing: nothing is built" 'docker build --build-arg' lacks
 calls "mirror missing: the image is the official container" 'dockerfile FROM docker.io/openwrt/imagebuilder:x86-64-25.12.6' has
 calls "mirror missing: the label has the digest of the container" "label ${label_source_digest}=${base_digest}" has
 calls "mirror missing: the label has the release" "label ${label_release}=25.12.6" has

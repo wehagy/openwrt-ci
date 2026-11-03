@@ -80,19 +80,40 @@ expect "refresh-images.yml: ib reads the repository" refresh-images '.jobs.ib.pe
 expect "refresh-images.yml: it is only called, never triggered" refresh-images '.on | keys | join(" ")' workflow_call
 
 # --- the jobs that write run harness code only -------------------------------
-write_steps='.jobs.sdk.steps[], .jobs.ib.steps[]'
-expect "refresh-images.yml: sdk and ib use no cache and no setup-uv" refresh-images \
-	"[${write_steps} | select(.uses != null) | .uses | select(test(\"cache|setup-uv\"))] | length" 0
-expect "refresh-images.yml: sdk and ib use only the checkout action" refresh-images \
-	"[${write_steps} | select(.uses != null) | .uses | sub(\"@.*\"; \"\")] | unique | join(\" \")" actions/checkout
-expect "refresh-images.yml: sdk and ib check out without credentials" refresh-images \
-	"[${write_steps} | select(.uses != null) | .with.\"persist-credentials\"] | unique | join(\" \")" false
-expect "refresh-images.yml: sdk and ib check out the base, not the caller" refresh-images \
-	"[${write_steps} | select(.uses != null) | .with.repository] | unique | join(\" \")" '${{ env.HARNESS_CI_REPOSITORY }}'
+# The text of the jobs sdk and ib (everything from the sdk job on), without
+# comments: grep and sed read it, not yq, so that a step added to either job in
+# any form is seen.
+write_jobs=$(awk '/^  sdk:$/ { p = 1 } p && $0 !~ /^[[:space:]]*#/' "${workflows}/refresh-images.yml") ||
+	die "cannot read refresh-images.yml"
+
+# Print how many lines of a text match an ERE.
+#
+# Arguments:
+#   $1  text   $2 ERE
+count_lines() {
+	cl_n=$(printf '%s\n' "$1" | grep -cE -- "$2") || [ "$?" -eq 1 ] || die "grep failed"
+	printf '%s\n' "${cl_n}"
+}
+
+# Compare a value with the expected one and record the case.
+#
+# Arguments:
+#   $1  case name   $2 value read   $3 expected
+same() {
+	if [ "$2" = "$3" ]; then record "$1" 0 ""; else record "$1" 1 "got [$2], expected [$3]"; fi
+}
+
+same "refresh-images.yml: sdk and ib use no cache and no setup-uv" "$(count_lines "${write_jobs}" 'actions/cache|setup-uv')" 0
+same "refresh-images.yml: sdk and ib use only the checkout action" \
+	"$(printf '%s\n' "${write_jobs}" | sed -n -e 's/^[ -]*uses: *//p' | sed -e 's/@.*//' | sort -u)" actions/checkout
+same "refresh-images.yml: sdk and ib check out without credentials" "$(count_lines "${write_jobs}" 'persist-credentials: false')" 2
+same "refresh-images.yml: sdk and ib never keep credentials" "$(count_lines "${write_jobs}" 'persist-credentials: (true|"true")')" 0
+same "refresh-images.yml: sdk and ib check out the base, not the caller" \
+	"$(printf '%s\n' "${write_jobs}" | sed -n -e 's/^ *repository: *//p' | sort -u)" "\${{ env.HARNESS_CI_REPOSITORY }}"
 expect "refresh-images.yml: the base repository is wehagy/openwrt-ci" refresh-images '.env.HARNESS_CI_REPOSITORY' wehagy/openwrt-ci
 
 # --- the repository that owns the refresh ------------------------------------
-want_repo='${{ inputs.refresh_repository || github.repository }}'
+want_repo="\${{ inputs.refresh_repository || github.repository }}"
 expect "build.yml: refresh_repository is an optional input" build '.on.workflow_call.inputs.refresh_repository.default' ""
 expect "build.yml: the pin step names the repository that owns the refresh" build \
 	'[.jobs.sdk.steps[] | select(.name == "Pin the SDK image") | .env.HARNESS_REFRESH_REPOSITORY] | join(" ")' "${want_repo}"
@@ -101,7 +122,7 @@ expect "images.yml: the pull step names the repository that owns the refresh" im
 	'[.jobs.image.steps[] | select(.name == "Pull the ImageBuilder image") | .env.HARNESS_REFRESH_REPOSITORY] | join(" ")' "${want_repo}"
 expect "images.yml: the fallback is off by default" images '.on.workflow_call.inputs.ib_fallback.default' false
 expect "images.yml: the resolve step passes the fallback input" images \
-	'[.jobs.image.steps[] | select(.name == "Resolve line, profile and package") | .env.HARNESS_IB_FALLBACK] | join(" ")' '${{ inputs.ib_fallback }}'
+	'[.jobs.image.steps[] | select(.name == "Resolve line, profile and package") | .env.HARNESS_IB_FALLBACK] | join(" ")' "\${{ inputs.ib_fallback }}"
 expect "ci.yml: every build and image job names wehagy/openwrt-ci-packages" ci \
 	'[.jobs | to_entries[] | select(.value.uses != null) | select(.value.uses | test("workflows/(build|images)[.]yml")) | select(.value.with.refresh_repository == "wehagy/openwrt-ci-packages") | .key] | join(" ")' \
 	"build-25-12 build-main image-25-12 image-main"

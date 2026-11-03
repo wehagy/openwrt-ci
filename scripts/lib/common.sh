@@ -304,6 +304,21 @@ check_vm_memory() {
 		die "invalid VM memory (allowed: <megabytes>M from 64M to 1024M)"
 }
 
+# Abort unless the argument is a per-command timeout of the apk commands of
+# the generic test: whole seconds, from 30 to 600. The value is never echoed
+# (see check_package_name).
+#
+# Arguments:
+#   $1  seconds
+check_apk_timeout() {
+	case "$1" in
+	*[!0-9]* | 0* | '') die "invalid apk timeout (allowed: whole seconds from 30 to 600)" ;;
+	*) ;;
+	esac
+	{ [ "${#1}" -le 3 ] && [ "$1" -ge 30 ] && [ "$1" -le 600 ]; } ||
+		die "invalid apk timeout (allowed: whole seconds from 30 to 600)"
+}
+
 # Abort unless the argument is a list of QEMU test target ids separated by
 # spaces or newlines: 1 to 16 ids of [a-z0-9][a-z0-9-]*, at most 32 characters
 # each. Whether an id exists is checked against harness/targets.yml by

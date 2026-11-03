@@ -21,18 +21,19 @@ Environment variables:
 import json
 import re
 import shlex
+import time
 
 import pytest
-from harness_util import env, poll
+from harness_util import LOG, apk_timeout_kwargs, env, poll
 
 # Emulated targets are slow; labgrid's run_check default is 30 s.
 CMD_TIMEOUT = 600
 # Queries and poll samples are short; a hung ssh must not outlive a deadline.
 QUERY_TIMEOUT = 30
-# apk commands in the VM right after the install: `apk info -L` took 0.5 to
-# 15 s in healthy runs and over 30 s once (run 41437522326, job 125258840649,
-# x86-64 on main with 128 MB), so the 30 s query bound is too tight for them.
-APK_TIMEOUT = 120
+# The apk commands in the VM have no timeout of ours: labgrid's default applies
+# (SSHDriver.run has none) unless the caller sets `apk_timeout` in test.yml, see
+# apk_timeout_kwargs(). The duration of `apk info -L` is logged and recorded
+# (apk_info_L_seconds) in every job.
 SERVICE_TIMEOUT = 60
 # procd reports an instance running right after the fork, before a missing
 # binary makes exec fail; only a state that holds counts.
@@ -68,14 +69,17 @@ def _init_scripts(vm_ssh, package):
     line. The header is required, so a changed output format or a failed
     listing fails the test instead of looking like a package without scripts.
     """
-    out, err, rc = vm_ssh.run(f"apk info -L {package}", timeout=APK_TIMEOUT)
+    start = time.monotonic()
+    out, err, rc = vm_ssh.run(f"apk info -L {package}", **apk_timeout_kwargs())
+    seconds = time.monotonic() - start
+    LOG.info("harness: apk info -L %s took %.1f s", package, seconds)
     assert rc == 0, f"apk info -L {package} failed with {rc}: {err}"
     lines = [line.strip() for line in out if line.strip()]
     header = re.compile(rf"^{re.escape(package)}-\S+ contains:$")
     assert lines and header.match(lines[0]), (
         f"unexpected `apk info -L {package}` output (no 'contains:' header): {out}"
     )
-    return [m.group(1) for line in lines[1:] if (m := INIT_SCRIPT.match(line))]
+    return [m.group(1) for line in lines[1:] if (m := INIT_SCRIPT.match(line))], seconds
 
 
 def _is_procd(vm_ssh, name):
@@ -132,10 +136,10 @@ def test_install_package(install):
 
 
 def test_package_is_installed(install, vm_ssh, package, record_property):
-    _, _, rc = vm_ssh.run(f"apk info -e {package}", timeout=APK_TIMEOUT)
+    _, _, rc = vm_ssh.run(f"apk info -e {package}", **apk_timeout_kwargs())
     assert rc == 0, f"apk info -e {package} failed with {rc}"
 
-    out, _, rc = vm_ssh.run(f"apk list -I {package}", timeout=APK_TIMEOUT)
+    out, _, rc = vm_ssh.run(f"apk list -I {package}", **apk_timeout_kwargs())
     assert rc == 0, f"apk list -I {package} failed with {rc}"
     # `apk list -I <glob>` may list several packages; pick the exact name:
     # "<package>-<version>" where the version starts with a digit.
@@ -155,8 +159,9 @@ def test_package_is_installed(install, vm_ssh, package, record_property):
     record_property("image_sha256", env("HARNESS_IMAGE_SHA256"))
 
 
-def test_services_running(install, vm_ssh, package):
-    names = _init_scripts(vm_ssh, package)
+def test_services_running(install, vm_ssh, package, record_property):
+    names, seconds = _init_scripts(vm_ssh, package)
+    record_property("apk_info_L_seconds", f"{seconds:.1f}")
     if not names:
         pytest.skip(f"{package} installs no /etc/init.d script, nothing to check")
 

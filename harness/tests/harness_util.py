@@ -23,6 +23,24 @@ def env(name):
     return value
 
 
+def apk_timeout_kwargs():
+    """Keyword arguments of vm_ssh.run for the apk commands of the generic test.
+
+    HARNESS_APK_TIMEOUT empty or unset: no `timeout` argument, so labgrid's own
+    default applies (SSHDriver.run has timeout=None: no per-command limit). The
+    caller's `apk_timeout` input (test.yml) sets it, in seconds.
+    """
+    value = os.environ.get("HARNESS_APK_TIMEOUT", "")
+    if not value:
+        return {}
+    if not value.isdigit():
+        pytest.fail(
+            f"HARNESS_APK_TIMEOUT must be whole seconds, got {value!r}",
+            pytrace=False,
+        )
+    return {"timeout": int(value)}
+
+
 def poll(check, timeout_s, interval_s=POLL_INTERVAL, stable_s=0.0):
     """Call check() until it reports success or the deadline passes.
 

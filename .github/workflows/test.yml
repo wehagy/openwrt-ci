@@ -64,6 +64,15 @@ on:
         required: false
         default: ""
 
+      apk_timeout:
+        description: >-
+          Timeout in seconds (30 to 600) of each apk command of the generic
+          test (apk info -L, apk info -e, apk list -I). Empty: none, the
+          default of labgrid (SSHDriver.run has no timeout).
+        type: string
+        required: false
+        default: ""
+
 permissions:
   contents: read
 
@@ -125,6 +134,7 @@ jobs:
           HARNESS_TEST_SECRETS: ${{ inputs.test_secrets }}
           HARNESS_TARGETS: ${{ inputs.targets }}
           HARNESS_MEMORY_INPUT: ${{ inputs.memory }}
+          HARNESS_APK_TIMEOUT: ${{ inputs.apk_timeout }}
         run: ci-base/scripts/validate-inputs.sh
 
       - name: Build matrix
@@ -280,6 +290,7 @@ jobs:
       - name: Run tests
         env:
           HARNESS_TEST_SECRETS: ${{ inputs.test_secrets }}
+          HARNESS_APK_TIMEOUT: ${{ inputs.apk_timeout }}
           HARNESS_SECRETS_JSON: ${{ inputs.test_secrets != '' && toJSON(secrets) || '' }}
         run: exec ci-base/scripts/with-test-secrets.sh ci-base/scripts/run-tests.sh
 

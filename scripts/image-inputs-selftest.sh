@@ -192,6 +192,37 @@ while [ "${i}" -lt 17 ]; do
 done
 validator_case check_target_ids reject "${ids17}" "17 ids"
 
+# --- check_apk_timeout and the summary line -----------------------------------
+
+for t in 30 120 600; do
+	validator_case check_apk_timeout accept "${t}" "'${t}'"
+done
+for t in '' 0 29 601 1000 9999 030 -30 +30 30s 1.5 ' 30' '30 ' '3e2' "1\$(id)"; do
+	validator_case check_apk_timeout reject "${t}" "'${t}'"
+done
+validator_case check_apk_timeout reject "120
+::error::x" "workflow command"
+
+printf '<testsuite><testcase classname="t" name="test_a" time="1.0"/></testsuite>' >"${work}/results.xml"
+summary_env() {
+	env HARNESS_LINE=25.12 HARNESS_TARGET=x86-64 HARNESS_RELEASE=25.12.6 HARNESS_KVM=true \
+		HARNESS_MEMORY=128M HARNESS_IMAGE_URL=u HARNESS_IMAGE_SHA256=s HARNESS_IMAGE_DATE=d \
+		HARNESS_PACKAGE=chrony HARNESS_PACKAGE_VERSION=4.9-r1 "$@" \
+		"${script_dir}/summary.sh" "${work}/results.xml" 0 5
+}
+script_case "summary without apk_timeout" 0 ANY summary_env
+if grep -qxF -- '- apk command timeout: none (labgrid default; apk_timeout not set by the caller)' "${work}/out"; then
+	record "summary says labgrid default when apk_timeout is not set" 0 ""
+else
+	record "summary says labgrid default when apk_timeout is not set" 1 "${sc_out}"
+fi
+script_case "summary with apk_timeout" 0 ANY summary_env HARNESS_APK_TIMEOUT=120
+if grep -qxF -- '- apk command timeout: 120 s (apk_timeout input of the caller)' "${work}/out"; then
+	record "summary says 120 s from the caller" 0 ""
+else
+	record "summary says 120 s from the caller" 1 "${sc_out}"
+fi
+
 # --- check_arch_token ------------------------------------------------------
 
 for a in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4 @tests @profiles 0x; do

@@ -438,8 +438,8 @@ a test repository, an upstream pull request) passes:
 
 Inputs (`line`, `package`, `source` required; all validated by
 `scripts/validate-inputs.sh` before use; an invalid value fails the run).
-Optional: `tests_path`, `test_secrets`, `targets`, `memory` and `ci_ref` (see
-above and "Test targets and VM memory").
+Optional: `tests_path`, `test_secrets`, `targets`, `memory`, `apk_timeout` and
+`ci_ref` (see above and "Test targets and VM memory").
 
 | Input     | Meaning                                    | Accepted                              |
 |-----------|--------------------------------------------|---------------------------------------|
@@ -485,12 +485,20 @@ above and "Test targets and VM memory").
   warning with the output of `apk update` and added as a line to the job
   summary; after the last attempt, or at a failure that is not the lost
   fetch, the session fails with the output of the attempts made.
-- Timeouts in the VM: queries are bounded at 30 s; the `apk` commands of
-  `test_package.py` (`apk info -L`, `apk info -e`, `apk list -I`) at 120 s,
-  because `apk info -L` right after the install took 0.5 to 15 s in healthy
-  runs and once more than 30 s (`TimeoutExpired`, run 41437522326, job
-  125258840649, `x86-64` on `main`, with netbird at 128 MB); that memory
-  pressure is the cause is not proven.
+- Timeouts in the VM: queries are bounded at 30 s. The `apk` commands of
+  `test_package.py` (`apk info -L`, `apk info -e`, `apk list -I`) have no
+  timeout of ours: labgrid's default applies (`SSHDriver.run` has
+  `timeout=None`, checked at the labgrid commit pinned in
+  `harness/openwrt-tests.uv.lock`). A caller whose package needs a bound sets
+  `apk_timeout` (whole seconds, 30 to 600; `scripts/validate-inputs.sh` refuses
+  anything else before a VM starts): `apk info -L` right after the install took
+  0.5 to 15 s in healthy runs and once more than 30 s (`TimeoutExpired`, run
+  41437522326, job 125258840649, `x86-64` on `main`, with netbird at 128 MB), so
+  netbird passes 120. The summary of each VM job says `apk command timeout: N s
+  (apk_timeout input of the caller)` or `none (labgrid default; ...)`, and the
+  test records the measured duration of `apk info -L` as the junit property
+  `apk_info_L_seconds` (also in the job log: `harness: apk info -L <package>
+  took N s`), so the timeout can be dropped once the values stay far below 30 s.
 - `harness/selftests/` (step "Harness helpers self-test" of `test.yml`) tests
   the retry helpers with a stub in place of the VM.
 - Tests: install, `apk` reports the expected version, and every `/etc/init.d`

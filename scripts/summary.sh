@@ -9,7 +9,8 @@
 # Environment variables (all set by scripts/resolve.sh and the fetch scripts):
 #   HARNESS_LINE, HARNESS_TARGET, HARNESS_RELEASE, HARNESS_KVM, HARNESS_MEMORY,
 #   HARNESS_IMAGE_URL, HARNESS_IMAGE_SHA256, HARNESS_IMAGE_DATE, HARNESS_PACKAGE,
-#   HARNESS_PACKAGE_VERSION
+#   HARNESS_PACKAGE_VERSION; HARNESS_APK_TIMEOUT (optional; the apk_timeout
+#   input of test.yml, empty: labgrid's default, no per-command timeout)
 
 set -eu
 
@@ -45,6 +46,11 @@ printf -- '- image: %s\n' "${image_url}"
 printf -- '- image sha256: %s\n' "${image_sha256}"
 printf -- '- image date (Last-Modified): %s\n' "${image_date}"
 printf -- '- package: %s %s\n' "${package}" "${package_version}"
+if [ -n "${HARNESS_APK_TIMEOUT:-}" ]; then
+	printf -- '- apk command timeout: %s s (apk_timeout input of the caller)\n' "${HARNESS_APK_TIMEOUT}"
+else
+	printf -- '- apk command timeout: none (labgrid default; apk_timeout not set by the caller)\n'
+fi
 printf -- '- pytest exit: %s, total: %s s\n' "${pytest_rc}" "${total}"
 
 if [ ! -f "${results}" ]; then

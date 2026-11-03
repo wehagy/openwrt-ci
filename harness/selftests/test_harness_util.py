@@ -9,7 +9,12 @@ import logging
 
 import harness_util
 import pytest
-from harness_util import APK_UPDATE_ATTEMPTS, apk_update, retry
+from harness_util import (
+    APK_UPDATE_ATTEMPTS,
+    apk_timeout_kwargs,
+    apk_update,
+    retry,
+)
 
 # The lost fetch as the log of malta-le (job 125011711905) shows it.
 LOST_OUT = [
@@ -156,3 +161,25 @@ def test_apk_update_writes_no_summary_when_nothing_was_repeated(monkeypatch, tmp
 def test_apk_update_works_without_a_job_summary(monkeypatch):
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     apk_update(StubSsh([LOST, OK]), 600, sleep=no_sleep)
+
+
+def test_apk_timeout_unset_leaves_labgrid_default(monkeypatch):
+    monkeypatch.delenv("HARNESS_APK_TIMEOUT", raising=False)
+    assert apk_timeout_kwargs() == {}
+
+
+def test_apk_timeout_empty_leaves_labgrid_default(monkeypatch):
+    monkeypatch.setenv("HARNESS_APK_TIMEOUT", "")
+    assert apk_timeout_kwargs() == {}
+
+
+def test_apk_timeout_from_the_caller(monkeypatch):
+    monkeypatch.setenv("HARNESS_APK_TIMEOUT", "120")
+    assert apk_timeout_kwargs() == {"timeout": 120}
+
+
+@pytest.mark.parametrize("value", ["12s", "-5", "1.5", " 120", "0x10"])
+def test_apk_timeout_not_whole_seconds_fails(monkeypatch, value):
+    monkeypatch.setenv("HARNESS_APK_TIMEOUT", value)
+    with pytest.raises(pytest.fail.Exception):
+        apk_timeout_kwargs()

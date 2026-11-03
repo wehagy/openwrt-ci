@@ -18,6 +18,8 @@
 #   HARNESS_TARGETS      optional; QEMU test targets (syntax only here, see
 #                        check_target_ids; scripts/matrix.sh checks the ids)
 #   HARNESS_MEMORY_INPUT optional; VM memory (see check_vm_memory)
+#   HARNESS_APK_TIMEOUT  optional; per-command timeout of the apk commands of
+#                        the generic test (see check_apk_timeout)
 
 set -eu
 
@@ -51,4 +53,7 @@ if [ -n "${targets_blank}" ]; then
 fi
 if [ -n "${HARNESS_MEMORY_INPUT:-}" ]; then
 	check_vm_memory "${HARNESS_MEMORY_INPUT}"
+fi
+if [ -n "${HARNESS_APK_TIMEOUT:-}" ]; then
+	check_apk_timeout "${HARNESS_APK_TIMEOUT}"
 fi

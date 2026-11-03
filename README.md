@@ -39,7 +39,8 @@ which calls the workflows below.
   - `selftests/`: pytest tests of the harness helpers (no VM).
   - `tests/`: pytest tests run inside the VMs through
     [aparcar/openwrt-tests](https://github.com/aparcar/openwrt-tests).
-  - `openwrt-tests.uv.lock`: pinned Python environment of those tests.
+  - `openwrt-tests.uv.lock`, `uv.toml`: seed lock and settings of the Python
+    environment of those tests (see "Pinned test environment").
 - `scripts/` (POSIX shell, used by the workflows)
   - SDK image: `resolve-sdk.sh`, `sdk-age-selftest.sh`,
     `sdk-image-ensure.sh`, `sdk-image-info.sh`, `ghcr-versions-selftest.sh`.
@@ -205,8 +206,8 @@ something else says so in its inputs:
 
 - 128M is the default of the `targets/qemu_*.yaml` files of
   [aparcar/openwrt-tests](https://github.com/aparcar/openwrt-tests) (checked at
-  commit `b3a04b2`: `qemu_x86-64.yaml`, `qemu_armsr-armv8.yaml`,
-  `qemu_malta-le.yaml`, `qemu_malta-be.yaml`), and the value of `memory` in
+  commit `b2ed9fe`, `main` on 03/11/2026: `qemu_x86-64.yaml`,
+  `qemu_armsr-armv8.yaml`, `qemu_malta-le.yaml`, `qemu_malta-be.yaml`), and the value of `memory` in
   `targets.yml`. A package that needs more passes `memory`: netbird was
   OOM-killed at 128M on `x86-64` (run 41480369349), so its caller passes `256M`.
 - The `targets` job validates both inputs and builds the matrix
@@ -527,8 +528,7 @@ Optional: `tests_path`, `test_secrets`, `targets`, `memory`, `apk_timeout`,
 - Timeouts in the VM: queries are bounded at 30 s. The `apk` commands of
   `test_package.py` (`apk info -L`, `apk info -e`, `apk list -I`) have no
   timeout of ours: labgrid's default applies (`SSHDriver.run` has
-  `timeout=None`, checked at the labgrid commit pinned in
-  `harness/openwrt-tests.uv.lock`). A caller whose package needs a bound sets
+  `timeout=None`, checked in labgrid 26.0.1). A caller whose package needs a bound sets
   `apk_timeout` (whole seconds, 30 to 600; `scripts/validate-inputs.sh` refuses
   anything else before a VM starts): `apk info -L` right after the install took
   0.5 to 15 s in healthy runs and once more than 30 s (`TimeoutExpired`, run
@@ -794,19 +794,41 @@ Packages are added in the calling repository
 
 ## Pinned test environment
 
-The `openwrt-tests` checkout is pinned to `OPENWRT_TESTS_REF` in `test.yml`.
-Its Python environment is pinned by `harness/openwrt-tests.uv.lock` (Python
-3.15, labgrid at a fixed commit) and installed with `uv sync --locked`, so the
-job fails if the lock no longer matches that `pyproject.toml`. To regenerate
-after changing the ref, copy the `pyproject.toml` of the new ref to an empty
-directory, run `uv lock --python 3.15` there and copy `uv.lock` to
-`harness/openwrt-tests.uv.lock`.
+Nothing about the test environment is pinned to a commit or a release, except
+the Python version (`UV_PYTHON` in `test.yml`) and the dependencies that are
+neither of the two below (the seed lock).
+
+- `aparcar/openwrt-tests` follows its `main` branch. The `targets` job of
+  `test.yml` reads the tip once (`scripts/resolve-tests-ref.sh`) and every
+  target job of that run checks out that commit, so the targets of one run
+  never test with different versions.
+- labgrid comes from PyPI, always the newest release of the 26 series
+  (`harness/uv.toml`: `labgrid>=26,<27`). A new major is a decision of ours:
+  change the constraint and the seed. `scripts/prepare-tests-env.sh` sets
+  `UV_NO_SOURCES=1`, because the `pyproject.toml` of openwrt-tests points
+  labgrid at the `aparcar/labgrid` fork branch `staging`, and
+  `UV_EXCLUDE_NEWER` to the instant of the `targets` job, so a release
+  published during a run cannot split its targets either.
+- Every other dependency stays where `harness/openwrt-tests.uv.lock` has it:
+  the script copies the seed to the checkout, runs `uv lock --upgrade-package
+  labgrid` (only labgrid moves; uv adds or moves another package only when the
+  `pyproject.toml` of the new commit asks for something the seed cannot
+  satisfy) and `uv sync --locked`. This costs one resolution per job (a few
+  seconds) and keeps the rest of the environment from changing without
+  a reason.
+- The resolved versions are in the summary of each VM job
+  (`openwrt-tests: <commit>`, `labgrid: <version>`), in the junit properties
+  `openwrt_tests_sha` and `labgrid_version` and in `pip-freeze.txt`; a job
+  fails if either is missing (`scripts/summary.sh`, `test_package.py`).
+- To refresh the seed (not needed for a run): run `scripts/prepare-tests-env.sh`
+  on a checkout of `main` and copy the `uv.lock` it leaves there to
+  `harness/openwrt-tests.uv.lock`.
 
 ## Deviations from upstream
 
 Every place where the base differs from the default of the project it builds
 on: [aparcar/openwrt-tests](https://github.com/aparcar/openwrt-tests) (QEMU
-targets and fixtures, defaults checked at `b3a04b2`), labgrid,
+targets and fixtures, defaults checked at `b2ed9fe`), labgrid,
 [openwrt/gh-action-sdk](https://github.com/openwrt/gh-action-sdk), the Image
 Builder and the official OpenWrt images. "Package" says whether a calling
 repository can change it with an input of the reusable workflows.
@@ -822,7 +844,7 @@ repository can change it with an input of the reusable workflows.
 | Service test: a procd instance that is not running passes if it exited with `exit_code` 0, but at least one instance must run and be stable; scripts a caller lists in `services_disabled` are skipped | `harness/tests/harness_util.py` (`judge_instances`, `service_sampler`, `split_disabled`), `services_disabled` input of `.github/workflows/test.yml` | chrony declares a second, one-shot instance (`chrony-hotplug`, `exit_code` 0, run 41552951052, job 125652090597) that an all-instances-running rule failed; a package whose service is disabled by default has no instance after `start` | yes (`services_disabled`) |
 | VM memory 128M for every target, as upstream; overridable | `memory` of each target in `harness/targets.yml` and `memory` input of `.github/workflows/test.yml` (applied by `scripts/prepare-target.sh`) | not a deviation by default; netbird needs 256M (OOM-killed at 128M on `x86-64`, run 41480369349) | yes (`memory`) |
 | `apk update` repeated up to 5 times, 5 s apart, only when stderr has `Failed to send request: Operation not permitted` | `harness/tests/harness_util.py` (`APK_UPDATE_*`, `apk_update`), `harness/tests/conftest.py` (F3) | one of the parallel fetches of the first `apk update` was lost on `malta-le` and `malta-be` (runs 41427983225, 41360955048); any other failure fails at once | no |
-| `openwrt-tests` pinned to a commit, Python 3.15 and a lock of our own (`harness/openwrt-tests.uv.lock`, `uv sync --locked`); labgrid from the `aparcar/labgrid` fork, branch `staging`, at `475a767` | `.github/workflows/test.yml` (`OPENWRT_TESTS_REF`, `UV_PYTHON`, step "Prepare openwrt-tests"), the `labgrid` entry of `harness/openwrt-tests.uv.lock` | reproducible runs: the environment never changes between two runs of the same commit. A next slice makes `openwrt-tests` follow `main` and labgrid `>=26,<27` from PyPI | no |
+| `openwrt-tests` follows `main` (one commit per run) and labgrid comes from PyPI (`>=26,<27`) instead of the `aparcar/labgrid` fork, branch `staging`, that its `pyproject.toml` names (`[tool.uv.sources]`, ignored with `UV_NO_SOURCES=1`); Python 3.15; the other dependencies stay at a seed lock of our own | `harness/uv.toml`, `harness/openwrt-tests.uv.lock`, `scripts/prepare-tests-env.sh`, `scripts/resolve-tests-ref.sh`, `UV_PYTHON` and the steps "Resolve the openwrt-tests commit" and "Install the openwrt-tests environment" of `.github/workflows/test.yml` | user decision: always the latest upstream tests and the latest stable labgrid, without a major jump; the fork `staging` branch was only a pin to a development commit, and the PyPI release of the 26 series is what upstream's own default (`labgrid>=25.0`) resolves to once the source is ignored. The price is that a run can change with no commit of ours; the resolved versions are shown in the summary | no |
 | Own SDK image on GHCR, `ghcr.io/wehagy/openwrt-sdk:<arch>-<suffix>`, rebuilt lazily when older than 1 day (`sdk_max_age_days`) or built from another `docker/sdk-image/Dockerfile` (label with its sha256), instead of the SDK download that `openwrt/gh-action-sdk` does in every run | `docker/sdk-image/Dockerfile`, `scripts/sdk-image-ensure.sh`, `sdk_tag_suffix` and `sdk_max_age_days` of each line in `harness/lines.yml`, `.github/workflows/build.yml` (`sdk-image`) | the snapshot SDK container ships only `setup.sh`, which downloads about 280 MB from the mirror in 13 to 14 minutes in every job; the image is pinned by digest per run | yes (`sdk_container`, `refresh_sdk`) |
 | `shfmt` v3.14.1 (release binary, sha256 pinned) installed in the SDK image; the job fails if the image has no `shfmt` | `docker/sdk-image/Dockerfile`, step "Check that the SDK image has shfmt" of `.github/workflows/build.yml` | the upstream SDK image has no `shfmt`, so the init-script format check of `make package/<pkg>/check` is a no-op there (openwrt/packages run 41512251371, job 125513520170: `find: 'shfmt': No such file or directory`; gh-action-sdk issue #37; the check was added in gh-action-sdk da3664e, 2021-08-08); here it runs, and a package cannot override it | no |
 | `openwrt/gh-action-sdk` pinned to commit `f5813d30`, called with `CONTAINER` = our image, `ARCH` = `<tag>@<digest>`, `FEED_DIR` = the full feed checkout | the `openwrt/gh-action-sdk` step of job `sdk` in `.github/workflows/build.yml` | no tags upstream; a reproducible build of the digest that was pinned; Go packages include `lang/golang` by relative path | no |

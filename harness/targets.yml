@@ -6,7 +6,7 @@
 #   path      target path below the release directory
 #   memory    VM memory. The default is 128M for every target, the value of
 #             the targets/qemu_*.yaml of aparcar/openwrt-tests (checked at
-#             b3a04b2). A caller overrides it for all the targets it tests with
+#             b2ed9fe). A caller overrides it for all the targets it tests with
 #             the `memory` input of test.yml (64M-1024M) when its package needs
 #             more: netbird needs 256M (OOM-killed at 128M on x86-64, run
 #             41480369349).

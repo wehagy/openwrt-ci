@@ -84,6 +84,9 @@ which calls the workflows below.
 - No shared caches: no job of `build.yml`, `test.yml` or `images.yml` uses
   `actions/cache`. `setup-uv` in `test.yml` runs with `enable-cache: false`, so
   the job that holds secrets neither restores nor saves an Actions cache.
+- The feed is mounted into the SDK container with its `.git`, and the code of
+  a PR runs in the container with write access to it. Accepted risk: the
+  maintainer reviews the code of a PR before it is run (decision 03/11).
 - Known residue: `openwrt/gh-action-sdk` (composite action, pinned) enables
   the caches of `docker/setup-qemu-action`, `docker/setup-buildx-action` and of
   the `docker/build-push-action` build (`type=gha`) in the `sdk` job. No job

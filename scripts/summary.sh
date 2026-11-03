@@ -5,6 +5,8 @@
 #
 # Usage:
 #   scripts/summary.sh <results.xml> <pytest-exit> <total-seconds> >> "$GITHUB_STEP_SUMMARY"
+#   (a `::warning::` annotation for services_disabled names the package does
+#   not install goes to stderr, so it shows in the log and as an annotation)
 #
 # Environment variables (all set by scripts/resolve.sh and the fetch scripts):
 #   HARNESS_LINE, HARNESS_TARGET, HARNESS_RELEASE, HARNESS_KVM, HARNESS_MEMORY,
@@ -109,4 +111,18 @@ if grep -o '<property name="[^"]*" value="[^"]*"' "${results}" >"${work_dir}/pro
 	sed -E 's/<property name="([^"]*)" value="([^"]*)"/- \1: \2/' "${work_dir}/props"
 else
 	printf -- '- none recorded\n'
+fi
+
+# A services_disabled name the package does not install (junit property of the
+# generic test): a summary line and a warning annotation (on stderr, which the
+# runner reads like stdout), never a failure. The names were validated by the
+# test; the charset is checked again before they reach a workflow command.
+if grep -o '<property name="services_disabled_unknown" value="[^"]*"' "${results}" >"${work_dir}/unknown"; then
+	unknown=$(sed -e 's/.* value="//' -e 's/"$//' "${work_dir}/unknown" | head -n 1)
+	case "${unknown}" in
+	*[!A-Za-z0-9._\ -]*) unknown="(invalid names, see the junit property)" ;;
+	*) ;;
+	esac
+	printf '\n- WARNING: services_disabled names %s, but the package does not install them: not checked (typo, or a renamed or line-specific script?)\n' "${unknown}"
+	printf '::warning title=services_disabled names a script the package does not install::%s (typo, or a renamed or line-specific init script?)\n' "${unknown}" >&2
 fi

@@ -64,18 +64,17 @@ def disabled_services():
     return sorted(set(names))
 
 
-def split_disabled(package, names, disabled):
-    """Split the init scripts into (to check, skipped as disabled by default).
+def split_disabled(names, disabled):
+    """Split the init scripts into (to check, skipped, declared but not installed).
 
-    A declared name that the package does not install fails: it is a typo or
-    a script that was renamed, and the check would silently cover less.
+    A declared name that the package does not install is a typo, or a script a
+    PR renamed, or one that exists on one line only. It does not fail the
+    test (that would be a red without a defect in the package); the caller
+    makes it visible (log, junit property, job summary and annotation).
     """
     unknown = [name for name in disabled if name not in names]
-    assert not unknown, (
-        f"services_disabled names {unknown}, but {package} installs only"
-        f" {names} under /etc/init.d"
-    )
-    return [n for n in names if n not in disabled], [n for n in names if n in disabled]
+    checked = [n for n in names if n not in disabled]
+    return checked, [n for n in names if n in disabled], unknown
 
 
 def judge_instances(instances):

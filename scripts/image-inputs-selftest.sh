@@ -257,6 +257,35 @@ else
 	record "summary names the services not checked" 1 "${sc_out}"
 fi
 
+# A services_disabled name that the package does not install: a warning
+# annotation and a summary line, exit 0 (not a failure).
+printf '<testsuite><testcase classname="t" name="test_a" time="1.0"><properties><property name="services_disabled_unknown" value="sokat netbirdd"/></properties></testcase></testsuite>' >"${work}/results.xml"
+script_case "summary with an unknown disabled service still exits 0" 0 ANY summary_env
+if grep -qxF -- '- WARNING: services_disabled names sokat netbirdd, but the package does not install them: not checked (typo, or a renamed or line-specific script?)' "${work}/out"; then
+	record "summary names the unknown disabled services" 0 ""
+else
+	record "summary names the unknown disabled services" 1 "${sc_out}"
+fi
+if grep -qxF -- '::warning title=services_disabled names a script the package does not install::sokat netbirdd (typo, or a renamed or line-specific init script?)' "${work}/err"; then
+	record "summary annotates the unknown disabled services (stderr)" 0 ""
+else
+	record "summary annotates the unknown disabled services (stderr)" 1 "${sc_err}"
+fi
+printf '<testsuite><testcase classname="t" name="test_a" time="1.0"><properties><property name="services_disabled_unknown" value="x::error::y"/></properties></testcase></testsuite>' >"${work}/results.xml"
+script_case "summary with a forged unknown name still exits 0" 0 ANY summary_env
+if grep -q 'x::error::y' "${work}/err"; then
+	record "summary does not pass a forged name to a workflow command" 1 "${sc_err}"
+else
+	record "summary does not pass a forged name to a workflow command" 0 ""
+fi
+printf '<testsuite><testcase classname="t" name="test_a" time="1.0"/></testsuite>' >"${work}/results.xml"
+script_case "summary without an unknown disabled service" 0 ANY summary_env
+if grep -q 'WARNING\|::warning' "${work}/out" "${work}/err"; then
+	record "summary has no warning when no name is unknown" 1 "${sc_out}${sc_err}"
+else
+	record "summary has no warning when no name is unknown" 0 ""
+fi
+
 # --- check_arch_token ------------------------------------------------------
 
 for a in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4 @tests @profiles 0x; do
@@ -447,6 +476,60 @@ HARNESS_PROFILES="x86/64/generic"
 script_case "resolve-profiles invalid line" 1 '' "${rp}" 'a;b'
 script_case "resolve-profiles unknown line" 1 '' "${rp}" 99.99
 script_case "resolve-profiles wrong argument count" 1 '' "${rp}"
+
+# Only an HTTP 404 means "the target does not exist"; any other answer of the
+# mirror (429, 5xx) or a network error is "cannot fetch", with the status. A
+# fake curl stands in for the mirror: it behaves as curl -f -w '%{http_code}'
+# (exit 22 for an HTTP status >= 400 when -f is given, the status printed for -w).
+mkdir -p "${work}/stub"
+cat >"${work}/stub/curl" <<'STUB'
+#!/usr/bin/env sh
+fail_flag=
+code_flag=
+for arg in "$@"; do
+	case "${arg}" in
+	-fsS) fail_flag=1 ;;
+	-w) code_flag=1 ;;
+	*) ;;
+	esac
+done
+[ -z "${STUB_ERR}" ] || printf '%s\n' "${STUB_ERR}" >&2
+[ -z "${code_flag}" ] || printf '%s' "${STUB_CODE}"
+[ "${STUB_RC}" -eq 0 ] || exit "${STUB_RC}"
+if [ -n "${fail_flag}" ] && [ "${STUB_CODE}" -ge 400 ]; then
+	exit 22
+fi
+exit 0
+STUB
+chmod +x "${work}/stub/curl"
+# Arguments: $1 case name, $2 HTTP status, $3 curl exit code, $4 curl stderr,
+# $5 message expected on stderr (a fixed string)
+mirror_case() {
+	HARNESS_PROFILES="x86/64/generic"
+	script_case "resolve-profiles $1 prints nothing" 1 '' \
+		env PATH="${work}/stub:${PATH}" STUB_CODE="$2" STUB_RC="$3" STUB_ERR="$4" "${rp}" main
+	if grep -qF -- "$5" "${work}/err"; then
+		record "resolve-profiles $1 says: $5" 0 ""
+	else
+		record "resolve-profiles $1 says: $5" 1 "${sc_err}"
+	fi
+	case "$5" in
+	*"does not exist"*) mc_other="cannot fetch" ;;
+	*) mc_other="does not exist" ;;
+	esac
+	if grep -qF -- "${mc_other}" "${work}/err"; then
+		record "resolve-profiles $1 does not say: ${mc_other}" 1 "${sc_err}"
+	else
+		record "resolve-profiles $1 does not say: ${mc_other}" 0 ""
+	fi
+}
+mirror_case "HTTP 404" 404 0 "curl: (22) error: 404" "target x86/64 does not exist on line main"
+mirror_case "HTTP 500" 500 0 "curl: (22) error: 500" "cannot fetch"
+mirror_case "HTTP 500 status" 500 0 "curl: (22) error: 500" "HTTP 500 (curl exit 22)"
+mirror_case "HTTP 503" 503 0 "curl: (22) error: 503" "HTTP 503 (curl exit 22)"
+mirror_case "HTTP 429" 429 0 "curl: (22) error: 429" "HTTP 429 (curl exit 22)"
+mirror_case "network error" 000 6 "curl: (6) Could not resolve host" "HTTP 000 (curl exit 6): curl: (6) Could not resolve host"
+mirror_case "timeout" 000 28 "curl: (28) Operation timed out" "cannot fetch"
 
 # --- matrix.sh and resolve.sh: test targets and memory ------------------------
 

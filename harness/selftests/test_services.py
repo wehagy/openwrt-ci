@@ -216,23 +216,21 @@ def test_judge_rejects_no_instance():
 
 
 def test_disabled_services_are_split_from_the_checked_ones():
-    checked, skipped = split_disabled("socat", ["socat", "socat-x"], ["socat"])
-    assert (checked, skipped) == (["socat-x"], ["socat"])
+    split = split_disabled(["socat", "socat-x"], ["socat"])
+    assert split == (["socat-x"], ["socat"], [])
 
 
 def test_no_disabled_service_checks_every_script():
-    assert split_disabled("chrony", ["chronyd"], []) == (["chronyd"], [])
+    assert split_disabled(["chronyd"], []) == (["chronyd"], [], [])
 
 
 def test_everything_disabled_leaves_nothing_to_check():
-    assert split_disabled("socat", ["socat"], ["socat"]) == ([], ["socat"])
+    assert split_disabled(["socat"], ["socat"]) == ([], ["socat"], [])
 
 
-def test_a_disabled_name_the_package_does_not_install_fails():
-    with pytest.raises(AssertionError) as info:
-        split_disabled("socat", ["socat"], ["sokat"])
-    assert "sokat" in str(info.value)
-    assert "installs only ['socat']" in str(info.value)
+def test_a_disabled_name_the_package_does_not_install_is_reported_not_raised():
+    assert split_disabled(["socat"], ["sokat"]) == (["socat"], [], ["sokat"])
+    assert split_disabled(["socat"], ["socat", "sokat"]) == ([], ["socat"], ["sokat"])
 
 
 def test_disabled_services_unset_or_empty_is_an_empty_list(monkeypatch):

@@ -69,7 +69,8 @@ on:
           /etc/init.d separated by spaces or commas, at most 16). The service
           check of the generic test skips them with a logged reason; every
           other script must have a running, stable instance. Empty: none. A
-          name the package does not install fails the test.
+          name the package does not install (a typo, a renamed script) does
+          not fail the test: the job summary and a warning annotation name it.
         type: string
         required: false
         default: ""

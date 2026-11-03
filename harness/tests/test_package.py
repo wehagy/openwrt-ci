@@ -7,8 +7,10 @@ and every running instance must keep its pid for a stable window; an instance
 that is not running passes only if it exited with exit_code 0 (a one-shot);
 anything else fails (harness_util.judge_instances). The service check is
 skipped only for a package that installs no init script and for the scripts the
-caller declares disabled by default (HARNESS_SERVICES_DISABLED). Records the package version, the line
-and the image used as junit properties.
+caller declares disabled by default (HARNESS_SERVICES_DISABLED). A declared name
+that the package does not install is not a failure: it is recorded as the junit
+property services_disabled_unknown, which the job summary turns into a warning.
+Records the package version, the line and the image used as junit properties.
 
 Environment variables:
   HARNESS_APK              host path of the .apk to install in the VM
@@ -140,7 +142,14 @@ def test_services_running(install, vm_ssh, package, record_property):
     if not names:
         pytest.skip(f"{package} installs no /etc/init.d script, nothing to check")
 
-    names, disabled = split_disabled(package, names, disabled_services())
+    names, disabled, unknown = split_disabled(names, disabled_services())
+    if unknown:
+        LOG.warning(
+            "harness: services_disabled names %s, but %s does not install them",
+            unknown,
+            package,
+        )
+        record_property("services_disabled_unknown", " ".join(unknown))
     for name in disabled:
         LOG.warning("harness: service %s skipped, declared disabled by default", name)
         record_property(f"service_{name}", "skipped: disabled by default")

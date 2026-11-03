@@ -75,12 +75,13 @@ if [ -n "${package}" ]; then
 fi
 # The version alone does not prove the origin: a feed package of the same
 # version would carry the same manifest line. The checksum of the installed
-# package must be the one of the local index.
+# package must be the one apk wrote when it installed the built .apk in a
+# scratch root (imagebuilder-make.sh).
 if [ -n "${package}" ]; then
-	[ -f "${ib_dir}/local-index.dump" ] || die "no local-index.dump in ${ib_dir}"
+	[ -f "${ib_dir}/local-expected.db" ] || die "no local-expected.db in ${ib_dir}"
 	[ -f "${ib_dir}/local-installed.db" ] || die "no local-installed.db in ${ib_dir}"
-	ib_check_installed_is_local "${ib_dir}/local-index.dump" "${ib_dir}/local-installed.db" \
-		"${package}" "${version}"
+	ib_check_installed_is_local "${ib_dir}/local-expected.db" "${ib_dir}/local-installed.db" \
+		"${package}"
 fi
 # The tokens were validated above, so the glob characters are not in them.
 for token in ${image_packages}; do

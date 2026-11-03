@@ -2,17 +2,17 @@
 # Responsibility: run inside an official OpenWrt ImageBuilder container: put
 # the built .apk (when there is a package of our own) into the ImageBuilder
 # package directory, build one profile
-# and copy the build output to the mounted output directory. The unsigned
-# .apk needs no signature override: the ImageBuilder indexes its packages/
-# directory itself and signs that index with its local key.
+# and copy the build output to the mounted output directory.
 #
-# The built package is requested as <name>=<version>, the version read from
-# the metadata of the .apk (apk adbdump), so that the ImageBuilder cannot take
-# a higher or equal version from the official feeds (lib/ib-pins.sh). Three
-# files are left in the output directory for scripts/collect-images.sh, which
-# proves that the image holds that very apk: local-apk.dump (metadata of the
-# .apk), local-index.dump (the local packages.adb) and local-installed.db (the
-# record of the package in the apk database of the image root).
+# The built package is requested by the path of its .apk (lib/ib-pins.sh), not
+# by name: apk installs that file whatever version the official feeds hold,
+# equal or higher included, and the apk of the feeds never wins. The mechanism
+# is native to apk, it needs no change to the ImageBuilder and no change to the
+# package version. Three files are left in the output directory for
+# scripts/collect-images.sh, which proves that the image holds that very apk:
+# local-apk.dump (metadata of the .apk), local-installed.db (the record of the
+# package in the apk database of the image root) and local-expected.db (the
+# record apk writes when it installs the same .apk in a scratch root).
 #
 # An image that does not fit the flash is not a make failure: check-size only
 # prints "WARNING: Image file ... is too big: <size> > <limit>" and deletes
@@ -30,7 +30,7 @@
 #   HARNESS_PACKAGES      packages to install, space separated, `-name` removes
 #                         one (Image Builder syntax); may be empty (required to
 #                         be set). The built package may be listed by name; it
-#                         is requested as name=<version> either way
+#                         is requested by the path of its .apk either way
 #   HARNESS_TARGET_PATH   <target>/<subtarget> (required)
 #   HARNESS_IB_SETUP      true: download the ImageBuilder with ./setup.sh
 #                         first (snapshot tags; scripts/ib-setup.sh retries a
@@ -100,9 +100,17 @@ if [ -n "${package}" ]; then
 	file_version=$(apk_version "${apk_file}" "${package}")
 	[ "${file_version}" = "${meta_version}" ] ||
 		die "the file name of ${apk_file} does not match its version ${meta_version}"
-	cp "${apk_file}" packages/ || die "cannot copy ${apk_file} to packages/"
-	ib_fix_format_packages Makefile
-	packages=$(ib_pin_packages "${packages}" "${package}" "${meta_version}")
+	local_apk=${PWD}/packages/$(basename "${apk_file}")
+	cp "${apk_file}" "${local_apk}" || die "cannot copy ${apk_file} to packages/"
+	# A .apk installed by path must carry a signature the keys of the
+	# ImageBuilder trust (the index of packages/ is signed by the Makefile, a
+	# file given by path is not covered by it): sign the copy with the local
+	# key of the ImageBuilder, which the Makefile creates on first use.
+	make -s _check_keys || die "cannot create the local signing key"
+	"${apk_tool}" --allow-untrusted --keys-dir "${PWD}/keys" adbsign \
+		--sign-key "${PWD}/keys/local-private-key.pem" "${local_apk}" ||
+		die "cannot sign ${local_apk} with the local key"
+	packages=$(ib_local_packages "${packages}" "${package}" "${local_apk}")
 	printf 'imagebuilder-make: PACKAGES=%s\n' "${packages}"
 fi
 
@@ -127,11 +135,10 @@ find build_dir -type f -name root.squashfs -exec stat -c %s {} + \
 cp -R "bin/targets/${target_path}/." "${out_dir}/" ||
 	die "cannot copy bin/targets/${target_path}"
 
-# The evidence that the image holds the built apk: the local index and the
-# record of the package in the apk database of the image root.
+# The evidence that the image holds the built apk: the record of the package
+# in the apk database of the image root, and the record apk writes for the same
+# .apk in a scratch root (same repositories, so its dependencies resolve).
 if [ -n "${package}" ]; then
-	"${apk_tool}" adbdump packages/packages.adb >"${out_dir}/local-index.dump" ||
-		die "cannot read the local index packages/packages.adb"
 	installed_dbs=$(find build_dir -path '*/lib/apk/db/installed' -type f) ||
 		die "cannot search build_dir"
 	[ -n "${installed_dbs}" ] || die "no apk database of the image root in build_dir"
@@ -150,4 +157,17 @@ if [ -n "${package}" ]; then
 		fi
 	done
 	rm -f "${out_dir}/installed.record"
+	arch=$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES="\(.*\)"$/\1/p' .config) ||
+		die "cannot read .config"
+	[ -n "${arch}" ] || die "no CONFIG_TARGET_ARCH_PACKAGES in .config"
+	scratch=$(mktemp -d) || die "cannot create a scratch root"
+	"${apk_tool}" --root "${scratch}" --keys-dir "${PWD}/keys" --no-logfile \
+		--arch "${arch}" --repositories-file repositories \
+		--repository packages/packages.adb \
+		add --usermode --initdb --no-scripts "${local_apk}" ||
+		die "cannot install ${apk_file} in a scratch root"
+	installed_record "${scratch}/lib/apk/db/installed" "${package}" \
+		>"${out_dir}/local-expected.db"
+	[ -s "${out_dir}/local-expected.db" ] || die "${package} is not in the scratch root"
+	rm -rf "${scratch}"
 fi

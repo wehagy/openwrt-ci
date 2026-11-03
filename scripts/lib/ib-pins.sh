@@ -1,16 +1,17 @@
 #!/usr/bin/env sh
-# Responsibility: pin the locally built package in the Image Builder package
-# list and prove afterwards that the image holds that very apk (sourced, not
-# run). The Image Builder resolves PACKAGES against the local packages/ index
-# and the official feeds together and takes the highest version, so a bare
-# <name> installs the feed's package whenever it is newer than, or equal to,
-# the one built here. <name>=<version> makes the version exact; since an equal
-# version may still come from the feed, the checksum of the installed package
-# is compared with the one of the local index.
+# Responsibility: install the locally built package in the Image Builder from
+# its .apk file and prove afterwards that the image holds that very apk
+# (sourced, not run). The Image Builder resolves a package name against the
+# local packages/ index and the official feeds together, takes the highest
+# version and, at an equal version, a feed package; no <name> or <name>=<version>
+# selects the local build for sure. A path to the .apk does: apk installs that
+# file itself (world entry <name><><checksum>), whatever the feeds hold. To
+# prove it, the same .apk is installed in a scratch root with the same
+# repositories and the checksum of its record in the installed database
+# must be the one of the record in the image root.
 #
 # Needs lib/common.sh. The dumps are the output of `apk adbdump` of the .apk
-# (info: block) and of packages.adb (index); the installed database is the
-# lib/apk/db/installed of the image root.
+# (info: block); the installed database is the lib/apk/db/installed of a root.
 #
 # Usage:
 #   . "${script_dir}/lib/common.sh"
@@ -18,30 +19,39 @@
 #
 # Environment variables: none.
 
-# Print the package list with the built package pinned: every token of the
-# list stays, except a bare <name>, which the pin replaces; <name>=<version>
-# comes last. A "-<name>" token removing the built package is an error (the
-# pin would silently win over the removal). Other tokens, including
-# "-<other>" removals and names that merely contain <name>, pass unchanged.
+# Print the package list with the built package given by the path of its
+# .apk: every token of the list stays, except a bare <name>, which the path
+# replaces; the path comes last. A "-<name>" token removing the built package
+# is an error (the file would silently win over the removal). Other tokens,
+# including "-<other>" removals and names that merely contain <name>, pass
+# unchanged.
 #
 # Arguments:
 #   $1  package list, tokens separated by spaces (see check_image_packages)
 #   $2  name of the built package
-#   $3  version of the built package, from the metadata of its .apk
-ib_pin_packages() {
+#   $3  absolute path of its .apk
+ib_local_packages() {
 	check_package_name "$2"
-	check_apk_version "$3"
-	ipp_out=
+	case "$3" in
+	/*) ;;
+	*) die "the path of the .apk must be absolute: $3" ;;
+	esac
+	case "$3" in
+	*[!A-Za-z0-9._/+~-]*) die "unexpected character in the path of the .apk: $3" ;;
+	*.apk) ;;
+	*) die "not an .apk path: $3" ;;
+	esac
+	ilp_out=
 	# The caller validated the list (no glob characters), so splitting is safe.
-	for ipp_token in $1; do
-		case "${ipp_token}" in
+	for ilp_token in $1; do
+		case "${ilp_token}" in
 		"-$2") die "the packages input removes the built package $2" ;;
 		"$2") ;;
-		*=*) die "a package of the packages input carries a version (name=version)" ;;
-		*) ipp_out=${ipp_out:+${ipp_out} }${ipp_token} ;;
+		*=* | */*) die "a package of the packages input carries a version or a path" ;;
+		*) ilp_out=${ilp_out:+${ilp_out} }${ilp_token} ;;
 		esac
 	done
-	printf '%s\n' "${ipp_out:+${ipp_out} }$2=$3"
+	printf '%s\n' "${ilp_out:+${ilp_out} }$3"
 }
 
 # Print the value of one field of the info: block of an `apk adbdump` of a
@@ -58,28 +68,6 @@ adb_info_field() {
 	' "$1" || die "cannot read the dump $1"
 }
 
-# Print the sha256 ("hashes:") that the index dump gives the package entry of
-# the name and version; empty when there is no such entry, and an error when
-# there are two.
-#
-# Arguments:
-#   $1  file with the `apk adbdump` of packages.adb
-#   $2  package name
-#   $3  package version
-adb_index_hash() {
-	aih_hashes=$(awk -v n="$2" -v v="$3" '
-		/^  - name: / { name = substr($0, 11); version = ""; next }
-		/^    version: / { version = substr($0, 14); next }
-		/^    hashes: / { if (name == n && version == v) print substr($0, 13) }
-	' "$1") || die "cannot read the dump $1"
-	case "${aih_hashes}" in
-	*"
-"*) die "the index lists $2 $3 more than once" ;;
-	*) ;;
-	esac
-	printf '%s\n' "${aih_hashes}"
-}
-
 # Print the record of one package in an installed database (the lines from
 # P:<name> up to the blank line); empty when the package is not there.
 #
@@ -94,8 +82,8 @@ installed_record() {
 }
 
 # Print the checksum of an installed package as 40 hex digits: the "C:" line
-# of its record in the installed database, Q1 plus the base64 of the first 20
-# bytes of the package's index sha256. Empty when the package is not there.
+# of its record in the installed database, Q1 plus the base64 of 20 bytes.
+# Empty when the package is not there.
 #
 # Arguments:
 #   $1  installed database (or a record of it)
@@ -123,53 +111,21 @@ installed_checksum_hex() {
 	printf '%s\n' "${ich_hex}"
 }
 
-# Abort unless the package installed in the image is the one of the local
-# index: the checksum of its record in the installed database must be the
-# first 40 hex digits of the sha256 the local index gives name and version.
+# Abort unless the package installed in the image is the apk built here: the
+# checksum of its record in the installed database of the image root must be
+# the one of the record apk wrote when it installed that same .apk in a
+# scratch root. A package of the feeds, whatever its version, has another one.
 #
 # Arguments:
-#   $1  file with the `apk adbdump` of the local packages.adb
-#   $2  installed database (or the record of the package)
+#   $1  installed database (or the record) of the scratch root
+#   $2  installed database (or the record) of the image root
 #   $3  package name
-#   $4  package version
 ib_check_installed_is_local() {
-	icl_index=$(adb_index_hash "$1" "$3" "$4")
-	[ -n "${icl_index}" ] || die "the local index has no $3 $4"
+	icl_expected=$(installed_checksum_hex "$1" "$3")
+	[ -n "${icl_expected}" ] || die "$3 is not in the installed database of the scratch root"
 	icl_installed=$(installed_checksum_hex "$2" "$3")
 	[ -n "${icl_installed}" ] || die "$3 is not in the installed database of the image"
-	icl_short=$(printf '%.40s' "${icl_index}")
-	[ "${icl_installed}" = "${icl_short}" ] ||
-		die "the image holds a $3 $4 that is not the locally built apk (installed ${icl_installed}, local ${icl_short}); a package of the feed won"
-	printf 'ib-pins: %s %s installed from the local apk (checksum %s)\n' "$3" "$4" "${icl_installed}" >&2
-}
-
-# Make the Image Builder Makefile pass a pin on to the right package only. The
-# FormatPackages of the released Image Builders (25.12) keeps the version of
-# the last <name>=<version> and appends it to every package after it, so a pin
-# breaks the whole install; the fixed form resets it for each package. Rewrites
-# the one known buggy line, leaves the fixed Makefile alone and aborts on any
-# other FormatPackages.
-#
-# Arguments:
-#   $1  path of the Image Builder Makefile
-ib_fix_format_packages() {
-	# shellcheck disable=SC2016 # Makefile text, nothing to expand
-	iff_old='$(if $(findstring =,$(pkg)),$(eval pkg_ver:==$(lastword $(subst =, ,$(pkg)))))'
-	# shellcheck disable=SC2016 # Makefile text, nothing to expand
-	iff_new='  $(eval pkg_ver:=$(if $(findstring =,$(pkg)),=$(lastword $(subst =, ,$(pkg)))))'
-	grep -Fq 'define FormatPackages' "$1" ||
-		die "$1 has no FormatPackages: this Image Builder cannot pin a version"
-	if grep -Fq -- "${iff_new}" "$1"; then
-		printf 'ib-pins: FormatPackages already resets the pin for each package\n' >&2
-		return 0
-	fi
-	grep -Fq -- "${iff_old}" "$1" || die "unknown FormatPackages in $1; not pinning"
-	iff_tmp=$(mktemp) || die "cannot create a temporary file"
-	awk -v old="${iff_old}" -v new="${iff_new}" '
-		index($0, old) { print new; next }
-		{ print }
-	' "$1" >"${iff_tmp}" || die "cannot rewrite $1"
-	cat "${iff_tmp}" >"$1" || die "cannot write $1"
-	rm -f "${iff_tmp}"
-	printf 'ib-pins: patched FormatPackages of %s (a pin leaked to the following packages)\n' "$1" >&2
+	[ "${icl_installed}" = "${icl_expected}" ] ||
+		die "the image holds a $3 that is not the locally built apk (installed ${icl_installed}, local ${icl_expected}); a package of the feed won"
+	printf 'ib-pins: %s installed from the local apk (checksum %s)\n' "$3" "${icl_installed}" >&2
 }

@@ -718,22 +718,17 @@ netbird - 0.78.1-r1
 owut - 2-r1
 EOF
 # What imagebuilder-make.sh leaves for the check that the image holds the
-# built apk: the apk metadata, the local index and the installed record. The
-# index hash is 0123456789abcdef x4; ASNFZ4mrze8BI0VniavN7wEjRWc= is Q1 +
-# base64 of its first 20 bytes, the checksum of a record installed from it.
+# built apk: the apk metadata, the record apk wrote when it installed the
+# .apk in a scratch root (local-expected.db) and the record in the image root
+# (local-installed.db). ASNFZ4mrze8BI0VniavN7wEjRWc= is the checksum of the
+# built apk, WcaXbNgoDLiKQt3UeHGPhhiX4P0= the one of a package of the feed.
 cat >"${ib}/local-apk.dump" <<'DUMP'
 info:
   name: netbird
   version: 0.78.1-r1
   arch: x86_64
 DUMP
-cat >"${ib}/local-index.dump" <<'DUMP'
-packages: # 1 items
-  - name: netbird
-    version: 0.78.1-r1
-    hashes: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-    arch: x86_64
-DUMP
+printf 'C:Q1ASNFZ4mrze8BI0VniavN7wEjRWc=\nP:netbird\nV:0.78.1-r1\n\n' >"${ib}/local-expected.db"
 printf 'C:Q1ASNFZ4mrze8BI0VniavN7wEjRWc=\nP:netbird\nV:0.78.1-r1\n\n' >"${ib}/local-installed.db"
 export HARNESS_IMAGE_GLOBS='*sysupgrade*'
 collect() {
@@ -778,8 +773,8 @@ sed 's/0.78.1-r1/0.99.0-r1/' "${ib}/local-apk.dump" >"${ib_meta}/local-apk.dump"
 script_case "collect: metadata version differs from the file name fails" 1 '' collect_in "${ib_meta}"
 ib_nodump=${work}/ib-nodump
 cp -R "${ib}" "${ib_nodump}"
-rm "${ib_nodump}/local-index.dump"
-script_case "collect: missing local index fails" 1 '' collect_in "${ib_nodump}"
+rm "${ib_nodump}/local-expected.db"
+script_case "collect: missing expected record fails" 1 '' collect_in "${ib_nodump}"
 script_case "collect: local package passes the check" 0 ANY collect_in "${ib}"
 unset HARNESS_IMAGE_GLOBS
 

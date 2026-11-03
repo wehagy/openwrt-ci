@@ -15,6 +15,7 @@ which calls the workflows below.
 |-----------------------------------------------------------------------------------|-----------------------------------------------------|
 | SDK build (`build.yml`) on lines `25.12` and `main`, architectures given by the caller | NetBird runtime tests (caller repository)           |
 | Own SDK image on GHCR, rebuilt when older than 1 day or on request                | Scheduled SDK image refresh (none today: lazy only) |
+| `shfmt` v3.14.1 (release binary, sha256 pinned) installed in the SDK image; the job fails if the image has no `shfmt` | `docker/sdk-image/Dockerfile`, step "Check that the SDK image has shfmt" of `.github/workflows/build.yml` | the upstream SDK image has no `shfmt`, so the init-script format check of `make package/<pkg>/check` is a no-op there (openwrt/packages run 41512251371, job 125513520170: `find: 'shfmt': No such file or directory`; gh-action-sdk issue #37; the check was added in gh-action-sdk da3664e, 2021-08-08); here it runs, and a package cannot override it | no |
 | QEMU test (`test.yml`) on lines `25.12` and `main`, sources `feed` and `artifact` | Upstream PR automation and testing (caller repository) |
 | QEMU targets `x86-64`, `armsr-armv8`, `malta-le`, `malta-be` on both lines        |                                                     |
 | Image build (`images.yml`) on lines `25.12` and `main`, profiles and packages given by the caller |                                                     |
@@ -58,7 +59,7 @@ which calls the workflows below.
     the self-tests), `lib/ghcr.sh` (registry reads),
     `lib/sdk-age.sh` (age rule and reuse/rebuild decision),
     `lib/sdk-labels.sh` (image label keys), `lib/ghcr-versions.sh` (delete of
-    a package version), `lib/ib-pins.sh` (pin of the built package).
+    a package version), `lib/ib-pins.sh` (install of the built `.apk` by path and the check).
 - `docker/sdk-image/Dockerfile`: derives the SDK image from the official one.
 - `.github/workflows/`
   - `build.yml`: reusable SDK build.
@@ -334,11 +335,17 @@ The caller must grant `packages: write` to the job that calls `build.yml`
     `org.opencontainers.image.created` in the image config of
     `<sdk_container>:<tag>`, set to the time just before
     `setup.sh` ran. An unreadable label is rebuilt, which heals it.
+  - Recipe: the label `io.github.wehagy.openwrt-ci.dockerfile-sha256` holds
+    the sha256 of `docker/sdk-image/Dockerfile`; an image with another value,
+    or none, is rebuilt however young (`lib/sdk-age.sh`, `sdk_decide`, proved
+    by `sdk-age-selftest.sh`). The Dockerfile installs `shfmt` (pinned
+    release binary, sha256 checked, version checked; the build fails
+    otherwise), which the init-script format check of the SDK needs.
   - The image is pushed as one plain image manifest (`--provenance=false
     --sbom=false`): an index with attestation manifests would add untagged
     package versions that the delete of an old version would leave behind,
     and `lib/ghcr.sh` rejects an index.
-  - Missing image, age over `sdk_max_age_days` (1 day for both lines) or
+  - Missing image, other Dockerfile, age over `sdk_max_age_days` (1 day for both lines) or
     `refresh_sdk`: pull the official container, run `setup.sh` in
     `docker build`, add labels, `docker buildx build --push`.
   - Retention: the superseded image is kept as `<tag>-prev` (current plus one
@@ -631,33 +638,38 @@ the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci
     `scripts/ib-setup-selftest.sh` (step "Image Builder setup self-test" of
     the `profiles` job) runs it against a fake `setup.sh`.
 - The `.apk` of `apk-<package>-<line>-<arch>` is copied to the Image Builder
-  `packages/` directory. It is unsigned and needs no signature override: the
-  Image Builder (`CONFIG_SIGNATURE_CHECK=y`) indexes `packages/` itself with
-  `apk mkndx --allow-untrusted` and signs that index with its local key.
-- The built package is requested as `<package>=<version>`
-  (`scripts/imagebuilder-make.sh`, `lib/ib-pins.sh`), the version read from
-  the metadata of the `.apk` (`apk adbdump`) and checked against its file
-  name. A bare name would install the highest version of the local
-  `packages/` index and the official feeds, so a feed package that is newer
-  would replace the one built here. Packages of the `packages` input stay
-  unpinned (the feed chooses); a `-<package>` that removes the built package
-  is refused. The released Image Builders (25.12) have a `FormatPackages`
-  that appends the version of the last `<name>=<version>` to every package
-  after it (the install then fails with `breaks: world[libgcc1=...]`);
-  `imagebuilder-make.sh` rewrites that one line to the form of `main` and
-  refuses an unknown `FormatPackages`.
+  `packages/` directory and signed there with the local key of the Image
+  Builder (`apk adbsign`; the key is created by `make _check_keys`, the target
+  the Makefile runs itself). A file installed by path is not covered by the
+  signature of the `packages/` index, and the Image Builder
+  (`CONFIG_SIGNATURE_CHECK=y`) refuses an unsigned one (`UNTRUSTED signature`,
+  measured on 25.12.2).
+- The built package is requested by the path of that `.apk`
+  (`scripts/imagebuilder-make.sh`, `lib/ib-pins.sh`), not by name: a name
+  resolves against the local index and the official feeds together and takes
+  the highest version, and at an equal version apk installs the feed's package
+  even with the local repository listed first (measured on 25.12.2). apk
+  installs a file given by path itself, at a lower, equal or higher version
+  than the feed (measured on 25.12.2 and on `main`), and the package version
+  stays as built. `<name>=<version>` does not help at an equal version, and a
+  tagged repository (`@local` in `repositories`, `<name>@local`) leaves
+  `<name>@local` in the world of the image, which makes `apk` on the device
+  refuse every change (`repository tag ... does not exist`). The `.apk`
+  metadata (`apk adbdump`) is read and its name and version are checked against
+  the file name. Packages of the `packages` input stay as given (the feed
+  chooses); a `-<package>` that removes the built package, and a version or a
+  path in the `packages` input, are refused.
 - `scripts/collect-images.sh` requires the line `<package> - <version>` in
   `*.manifest` (version of the built `.apk`, equal to the one in its
-  metadata), then that the installed package is the local one: the checksum
-  of its record in the apk database of the image root (`C:Q1...`, the first
-  20 bytes of the index `sha256`) must be the one of the local `packages.adb`.
-  A feed package of the same version fails here (measured on 25.12.2: apk
-  installs the feed's, also with the local repository listed first, so the
-  package under test needs a higher release than the feed's). Then it keeps the files
-  matching `image_globs` plus the manifest and `sha256sums`.
-  `scripts/ib-pins-selftest.sh` (step "Package pin self-test" of the
-  `profiles` job) covers the package list, the metadata readers, the check and
-  the `FormatPackages` repair.
+  metadata), then that the installed package is the built one: the checksum
+  of its record in the apk database of the image root (`C:Q1...`) must be the
+  one of the record apk writes when it installs the same `.apk` in a scratch
+  root with the same repositories (`local-expected.db`, made by
+  `imagebuilder-make.sh`). A package of the feeds has another checksum, at any
+  version. Then it keeps the files matching `image_globs` plus the manifest
+  and `sha256sums`. `scripts/ib-pins-selftest.sh` (step "Package pin
+  self-test" of the `profiles` job) covers the package list, the metadata
+  readers and the check.
 - An image that does not fit the flash: the Image Builder does not fail, it
   only prints `WARNING: Image file ... is too big: <size> > <limit>` and
   deletes the image (`Build/check-size`); `tplink-safeloader` refuses earlier
@@ -788,10 +800,11 @@ repository can change it with an input of the reusable workflows.
 | VM memory 128M for every target, as upstream; overridable | `memory` of each target in `harness/targets.yml` and `memory` input of `.github/workflows/test.yml` (applied by `scripts/prepare-target.sh`) | not a deviation by default; netbird needs 256M (OOM-killed at 128M on `x86-64`, run 41480369349) | yes (`memory`) |
 | `apk update` repeated up to 5 times, 5 s apart, only when stderr has `Failed to send request: Operation not permitted` | `harness/tests/harness_util.py` (`APK_UPDATE_*`, `apk_update`), `harness/tests/conftest.py` (F3) | one of the parallel fetches of the first `apk update` was lost on `malta-le` and `malta-be` (runs 41427983225, 41360955048); any other failure fails at once | no |
 | `openwrt-tests` pinned to a commit, Python 3.15 and a lock of our own (`harness/openwrt-tests.uv.lock`, `uv sync --locked`); labgrid from the `aparcar/labgrid` fork, branch `staging`, at `475a767` | `.github/workflows/test.yml` (`OPENWRT_TESTS_REF`, `UV_PYTHON`, step "Prepare openwrt-tests"), the `labgrid` entry of `harness/openwrt-tests.uv.lock` | reproducible runs: the environment never changes between two runs of the same commit. A next slice makes `openwrt-tests` follow `main` and labgrid `>=26,<27` from PyPI | no |
-| Own SDK image on GHCR, `ghcr.io/wehagy/openwrt-sdk:<arch>-<suffix>`, rebuilt lazily when older than 1 day (`sdk_max_age_days`), instead of the SDK download that `openwrt/gh-action-sdk` does in every run | `docker/sdk-image/Dockerfile`, `scripts/sdk-image-ensure.sh`, `sdk_tag_suffix` and `sdk_max_age_days` of each line in `harness/lines.yml`, `.github/workflows/build.yml` (`sdk-image`) | the snapshot SDK container ships only `setup.sh`, which downloads about 280 MB from the mirror in 13 to 14 minutes in every job; the image is pinned by digest per run | yes (`sdk_container`, `refresh_sdk`) |
+| Own SDK image on GHCR, `ghcr.io/wehagy/openwrt-sdk:<arch>-<suffix>`, rebuilt lazily when older than 1 day (`sdk_max_age_days`) or built from another `docker/sdk-image/Dockerfile` (label with its sha256), instead of the SDK download that `openwrt/gh-action-sdk` does in every run | `docker/sdk-image/Dockerfile`, `scripts/sdk-image-ensure.sh`, `sdk_tag_suffix` and `sdk_max_age_days` of each line in `harness/lines.yml`, `.github/workflows/build.yml` (`sdk-image`) | the snapshot SDK container ships only `setup.sh`, which downloads about 280 MB from the mirror in 13 to 14 minutes in every job; the image is pinned by digest per run | yes (`sdk_container`, `refresh_sdk`) |
+| `shfmt` v3.14.1 (release binary, sha256 pinned) installed in the SDK image; the job fails if the image has no `shfmt` | `docker/sdk-image/Dockerfile`, step "Check that the SDK image has shfmt" of `.github/workflows/build.yml` | the upstream SDK image has no `shfmt`, so the init-script format check of `make package/<pkg>/check` is a no-op there (openwrt/packages run 41512251371, job 125513520170: `find: 'shfmt': No such file or directory`; gh-action-sdk issue #37; the check was added in gh-action-sdk da3664e, 2021-08-08); here it runs, and a package cannot override it | no |
 | `openwrt/gh-action-sdk` pinned to commit `f5813d30`, called with `CONTAINER` = our image, `ARCH` = `<tag>@<digest>`, `FEED_DIR` = the full feed checkout | the `openwrt/gh-action-sdk` step of job `sdk` in `.github/workflows/build.yml` | no tags upstream; a reproducible build of the digest that was pinned; Go packages include `lang/golang` by relative path | no |
 | The built `.apk` is copied to the Image Builder `packages/` directory (unsigned, indexed and signed by the Image Builder itself) | `scripts/imagebuilder-make.sh` | the package under test must be in the image; the Image Builder (`CONFIG_SIGNATURE_CHECK=y`) indexes `packages/` with `apk mkndx --allow-untrusted` | no |
-| The built package is requested as `<package>=<version>` (version from the `.apk` metadata) and the installed apk checksum is compared with the local index; the Image Builder `FormatPackages` of 25.12 is rewritten to the form of `main` | `scripts/imagebuilder-make.sh`, `scripts/lib/ib-pins.sh` (`ib_pin_packages`, `ib_fix_format_packages`), `scripts/collect-images.sh` | a bare name installs the highest version of the local index and the feeds, so a newer feed package replaced the one under test; the 25.12 `FormatPackages` appends the version of the last pin to every following package (`breaks: world[libgcc1=...]`, measured on 25.12.2); apk installs a feed package of the same version even with the local repository first, so the checksum check fails the job instead of passing it | no |
+| The built package is requested by the path of its `.apk`, signed with the local key of the Image Builder, and the installed apk checksum is compared with the one apk gives the same `.apk` in a scratch root | `scripts/imagebuilder-make.sh`, `scripts/lib/ib-pins.sh` (`ib_local_packages`, `ib_check_installed_is_local`), `scripts/collect-images.sh` | a bare name or `name=version` installs a feed package of the same version (measured on 25.12.2), so the package under test would not be the one in the image; a path installs that file at any version; the checksum proves it | no |
 | Image Builder `setup.sh` repeated up to 3 times, 120 s apart, only on a `sha256sum ... did NOT match`, within a time budget (`HARNESS_IB_SETUP_BUDGET`, default 3000 s) | `scripts/ib-setup.sh` (retry loop and `HARNESS_IB_SETUP_BUDGET`), `scripts/imagebuilder-make.sh` | the snapshot directory is published file by file: the archive can be newer than its `sha256sums` (runs 41427929552, 41427983225); the budget keeps the retry inside the job timeout (`timeout-minutes` of job `image` in `.github/workflows/images.yml`, 90 min) | no |
 | An image that is too big is a result, not a build failure: accepted only with numbers, compared with the `:too-big` expectation | `scripts/check-image-outcome.sh` | the Image Builder only prints `WARNING: Image file ... is too big` and deletes the image; the size-less warning proves nothing | yes (`:too-big` on a profile) |
 | The released image and `sha256sums` are fetched and checked by us; for `main` the snapshot version is read before and after the download | `scripts/fetch-image.sh` | each snapshot target directory is published on its own, so the image and its checksum can change during the download | no |

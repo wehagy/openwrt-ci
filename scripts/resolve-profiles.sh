@@ -88,18 +88,22 @@ fetch_profiles_json() {
 	fpj_url=$(printf '%s\n' "${url_pattern}" |
 		sed -e "s|{release}|${release}|g" -e "s|{path}|$1/$2|g")/profiles.json
 	fpj_rc=0
-	curl -fsS --retry 3 --connect-timeout 20 --max-time 60 -o "${fpj_file}" \
-		"${fpj_url}" 2>"${work}/curl.err" || fpj_rc=$?
-	case "${fpj_rc}" in
-	0) ;;
-	22 | 37)
+	# -f makes curl exit 22 for any HTTP >= 400 and -w prints the status, so a
+	# 404 (the target is not there) is told apart from a 429 or a 5xx of the
+	# mirror (it is, but did not answer): only the first is the user's error.
+	# 37 is a local file that is not there (file:// mirror of the self-test).
+	fpj_code=$(curl -fsS --retry 3 --connect-timeout 20 --max-time 60 -o "${fpj_file}" \
+		-w '%{http_code}' "${fpj_url}" 2>"${work}/curl.err") || fpj_rc=$?
+	case "${fpj_rc}:${fpj_code}" in
+	0:*) ;;
+	22:404 | 37:*)
 		rm -f "${fpj_file}"
 		die "target $1/$2 does not exist on line ${LINE}: no profiles.json at ${fpj_url}"
 		;;
 	*)
 		rm -f "${fpj_file}"
-		fpj_err=$(cat "${work}/curl.err")
-		die "cannot fetch ${fpj_url} (curl exit ${fpj_rc}): ${fpj_err}"
+		fpj_err=$(tail -n 1 "${work}/curl.err")
+		die "cannot fetch ${fpj_url}: HTTP ${fpj_code:-000} (curl exit ${fpj_rc})${fpj_err:+: ${fpj_err}}"
 		;;
 	esac
 	jq -e '.profiles | type == "object"' "${fpj_file}" >/dev/null ||

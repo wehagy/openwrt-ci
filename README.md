@@ -835,8 +835,8 @@ neither of the two below (the seed lock).
   (`openwrt-tests: <commit>`, `labgrid: <version>`), in the junit properties
   `openwrt_tests_sha` and `labgrid_version` and in `pip-freeze.txt`; a job
   fails if either is missing (`scripts/summary.sh`, `test_package.py`).
-- `scripts/uv-lock-selftest.sh` runs the real uv (pinned in the `targets` job
-  of `test.yml`) against a fixture project and a local package index, with no
+- `scripts/uv-lock-selftest.sh` runs the real uv (`HARNESS_UV_VERSION` in
+  `test.yml`, the version the test jobs install too) against a fixture project and a local package index, with no
   network: the requirement yields the newest 26.x (not a 27, not an upload
   newer than the resolution instant), `labgrid<26` yields 25.x, an impossible
   requirement fails. Locally, in a container with uv 0.13.7 and Python 3.11 or

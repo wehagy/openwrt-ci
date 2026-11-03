@@ -98,6 +98,11 @@ env:
   HARNESS_CI_REPOSITORY: wehagy/openwrt-ci
   # Python for the openwrt-tests environment (scripts/prepare-tests-env.sh).
   UV_PYTHON: "3.15"
+  # The one uv version of this workflow: the real-uv self-test of the
+  # `targets` job proves the labgrid requirement against it, and the test jobs
+  # resolve and sync with the same one (a newer uv could read
+  # `--upgrade-package <spec>` differently).
+  HARNESS_UV_VERSION: "0.13.7"
 
 jobs:
   # The QEMU targets come from harness/targets.yml, not from this file.
@@ -145,12 +150,12 @@ jobs:
       # fixture project and a local package index; no network, no secrets.
       - uses: astral-sh/setup-uv@v10.3.3
         with:
-          version: "0.13.7"
+          version: ${{ env.HARNESS_UV_VERSION }}
           enable-cache: false
 
       - name: Tests environment self-test with the real uv
         env:
-          UV_SELFTEST_VERSION: "0.13.7"
+          UV_SELFTEST_VERSION: ${{ env.HARNESS_UV_VERSION }}
         run: ci-base/scripts/uv-lock-selftest.sh
 
       # aparcar/openwrt-tests follows its main branch (README, "Pinned test
@@ -257,6 +262,7 @@ jobs:
       # here (see README, Trust model).
       - uses: astral-sh/setup-uv@v10.3.3
         with:
+          version: ${{ env.HARNESS_UV_VERSION }}
           enable-cache: false
 
       - name: Resolve line and target

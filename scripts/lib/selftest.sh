@@ -76,3 +76,21 @@ script_case() {
 		record "${sc_name}" 0 ""
 	fi
 }
+
+# Run a command that must fail, whatever its exit code: `${VAR:?}` ends a
+# POSIX shell with 1 or 2 depending on the shell, so script_case cannot name
+# one code. Output goes to ${work}/out and ${work}/err.
+#
+# Arguments:
+#   $1  case name
+#   $2... command and arguments
+# shellcheck disable=SC2154 # work is the scratch directory of the sourcing self-test
+fails_case() {
+	fc_name=$1
+	shift
+	if "$@" >"${work}/out" 2>"${work}/err"; then
+		record "${fc_name}" 1 "exit 0"
+	else
+		record "${fc_name}" 0 ""
+	fi
+}

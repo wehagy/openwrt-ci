@@ -196,10 +196,10 @@ esac
 script_case "prepare: checkout at another commit fails" 1 "" \
 	env HARNESS_TESTS_SHA="${first}" HARNESS_TESTS_RESOLVED_AT=2026-11-03T10:00:00Z \
 	"${script_dir}/prepare-tests-env.sh" "${work}/checkout"
-script_case "prepare: missing commit fails" 1 "" \
+fails_case "prepare: missing commit fails" \
 	env -u HARNESS_TESTS_SHA HARNESS_TESTS_RESOLVED_AT=2026-11-03T10:00:00Z \
 	"${script_dir}/prepare-tests-env.sh" "${work}/checkout"
-script_case "prepare: missing instant fails" 1 "" \
+fails_case "prepare: missing instant fails" \
 	env -u HARNESS_TESTS_RESOLVED_AT HARNESS_TESTS_SHA="${head_main}" \
 	"${script_dir}/prepare-tests-env.sh" "${work}/checkout"
 script_case "prepare: not a checkout fails" 1 "" \

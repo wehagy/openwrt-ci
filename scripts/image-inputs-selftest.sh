@@ -245,7 +245,7 @@ if grep -qxF -- '- openwrt-tests: 0123456789abcdef0123456789abcdef01234567 (main
 else
 	record "summary shows the resolved openwrt-tests commit and labgrid version" 1 "${sc_out}"
 fi
-script_case "summary without the openwrt-tests commit fails" 1 "" \
+fails_case "summary without the openwrt-tests commit fails" \
 	summary_env HARNESS_OPENWRT_TESTS_SHA=
 script_case "summary with apk_timeout" 0 ANY summary_env HARNESS_APK_TIMEOUT=120
 if grep -qxF -- '- apk command timeout: 120 s (apk_timeout input of the caller)' "${work}/out"; then

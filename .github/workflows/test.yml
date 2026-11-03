@@ -141,6 +141,18 @@ jobs:
       - name: Tests environment self-test
         run: ci-base/scripts/tests-env-selftest.sh
 
+      # The labgrid requirement against the real uv (pinned here), with a
+      # fixture project and a local package index; no network, no secrets.
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.7"
+          enable-cache: false
+
+      - name: Tests environment self-test with the real uv
+        env:
+          UV_SELFTEST_VERSION: "0.13.7"
+        run: ci-base/scripts/uv-lock-selftest.sh
+
       # aparcar/openwrt-tests follows its main branch (README, "Pinned test
       # environment"); the tip is read once here so that every target job of
       # this run checks out the same commit.

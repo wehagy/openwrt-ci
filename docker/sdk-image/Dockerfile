@@ -9,6 +9,7 @@
 #
 # The line of /builder/.sdk-archive is the verified "<sha256> *<archive>" line
 # printed by setup.sh; scripts/sdk-image-ensure.sh copies it into image labels.
+#
 # shfmt: the init-script format check of `make package/<pkg>/check` runs it;
 # the official SDK container does not ship it, so the check validated nothing
 # (`find: 'shfmt': No such file or directory`). It is installed from the

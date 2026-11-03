@@ -659,6 +659,21 @@ the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci
   the file name. Packages of the `packages` input stay as given (the feed
   chooses); a `-<package>` that removes the built package, and a version or a
   path in the `packages` input, are refused.
+- The world of the image (`/etc/apk/world`) lists the package by name, as the
+  world of an official image does, so the device later upgrades it from the
+  feed. apk writes `<name><><checksum>` for a package installed from a file;
+  that pin would keep `apk upgrade` from ever replacing the package. The
+  Image Builder copies its `FILES` directory over the root after the packages
+  are installed, so `imagebuilder-make.sh` installs the packages once with
+  `make manifest` (an Image Builder target) to learn the world apk writes, and
+  gives `make image` a `FILES` directory whose `etc/apk/world` is that world
+  with only the pin of the built package replaced by its name (`ib_plain_world`;
+  the `=` pins the Image Builder itself writes, `base-files=...`, `kernel=...`,
+  `libc=...`, stay). The installed database is not touched: it still holds
+  the record of the built `.apk`. On the device, `apk upgrade` takes a higher
+  version of the package from the feed; at an equal version it changes
+  nothing, and the image keeps the built `.apk` until the feed has a higher
+  version.
 - `scripts/collect-images.sh` requires the line `<package> - <version>` in
   `*.manifest` (version of the built `.apk`, equal to the one in its
   metadata), then that the installed package is the built one: the checksum
@@ -666,10 +681,12 @@ the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci
   one of the record apk writes when it installs the same `.apk` in a scratch
   root with the same repositories (`local-expected.db`, made by
   `imagebuilder-make.sh`). A package of the feeds has another checksum, at any
-  version. Then it keeps the files matching `image_globs` plus the manifest
+  version. It then requires that the world of the image (`local-world`) is the
+  world apk wrote (`local-world-pinned`) with only that pin replaced by the
+  name, and that no entry carries `><`, `@` or `/` (`ib_check_world`). Then it keeps the files matching `image_globs` plus the manifest
   and `sha256sums`. `scripts/ib-pins-selftest.sh` (step "Package pin
   self-test" of the `profiles` job) covers the package list, the metadata
-  readers and the check.
+  readers, the check and the world.
 - An image that does not fit the flash: the Image Builder does not fail, it
   only prints `WARNING: Image file ... is too big: <size> > <limit>` and
   deletes the image (`Build/check-size`); `tplink-safeloader` refuses earlier
@@ -803,8 +820,9 @@ repository can change it with an input of the reusable workflows.
 | Own SDK image on GHCR, `ghcr.io/wehagy/openwrt-sdk:<arch>-<suffix>`, rebuilt lazily when older than 1 day (`sdk_max_age_days`) or built from another `docker/sdk-image/Dockerfile` (label with its sha256), instead of the SDK download that `openwrt/gh-action-sdk` does in every run | `docker/sdk-image/Dockerfile`, `scripts/sdk-image-ensure.sh`, `sdk_tag_suffix` and `sdk_max_age_days` of each line in `harness/lines.yml`, `.github/workflows/build.yml` (`sdk-image`) | the snapshot SDK container ships only `setup.sh`, which downloads about 280 MB from the mirror in 13 to 14 minutes in every job; the image is pinned by digest per run | yes (`sdk_container`, `refresh_sdk`) |
 | `shfmt` v3.14.1 (release binary, sha256 pinned) installed in the SDK image; the job fails if the image has no `shfmt` | `docker/sdk-image/Dockerfile`, step "Check that the SDK image has shfmt" of `.github/workflows/build.yml` | the upstream SDK image has no `shfmt`, so the init-script format check of `make package/<pkg>/check` is a no-op there (openwrt/packages run 41512251371, job 125513520170: `find: 'shfmt': No such file or directory`; gh-action-sdk issue #37; the check was added in gh-action-sdk da3664e, 2021-08-08); here it runs, and a package cannot override it | no |
 | `openwrt/gh-action-sdk` pinned to commit `f5813d30`, called with `CONTAINER` = our image, `ARCH` = `<tag>@<digest>`, `FEED_DIR` = the full feed checkout | the `openwrt/gh-action-sdk` step of job `sdk` in `.github/workflows/build.yml` | no tags upstream; a reproducible build of the digest that was pinned; Go packages include `lang/golang` by relative path | no |
-| The built `.apk` is copied to the Image Builder `packages/` directory (unsigned, indexed and signed by the Image Builder itself) | `scripts/imagebuilder-make.sh` | the package under test must be in the image; the Image Builder (`CONFIG_SIGNATURE_CHECK=y`) indexes `packages/` with `apk mkndx --allow-untrusted` | no |
+| The built `.apk` is copied to the Image Builder `packages/` directory and signed there with the local key of the Image Builder (`apk adbsign`) | `scripts/imagebuilder-make.sh` | the package under test must be in the image; a file installed by path is not covered by the signature of the `packages/` index (made by the Image Builder with `apk mkndx --allow-untrusted`), and the Image Builder (`CONFIG_SIGNATURE_CHECK=y`) refuses an unsigned one (`UNTRUSTED signature`, measured on 25.12.2) | no |
 | The built package is requested by the path of its `.apk`, signed with the local key of the Image Builder, and the installed apk checksum is compared with the one apk gives the same `.apk` in a scratch root | `scripts/imagebuilder-make.sh`, `scripts/lib/ib-pins.sh` (`ib_local_packages`, `ib_check_installed_is_local`), `scripts/collect-images.sh` | a bare name or `name=version` installs a feed package of the same version (measured on 25.12.2), so the package under test would not be the one in the image; a path installs that file at any version; the checksum proves it | no |
+| The `/etc/apk/world` of the image lists the built package by name (`<name>`), not as apk writes it for a file (`<name><><checksum>`): a `FILES` directory of the Image Builder with `etc/apk/world`, made from the world of an install-only run (`make manifest`) with only that pin replaced | `scripts/imagebuilder-make.sh`, `scripts/lib/ib-pins.sh` (`ib_plain_world`, `ib_check_world`), `scripts/collect-images.sh` | the pin ties the device to that very file: `apk upgrade` would never take the package from the feed. An official image lists the name alone, so the device upgrades the package from the feed as any other; the installed database still holds the built `.apk` (checksum check above). The image world must be the one of the install with the pin replaced, and no entry may carry `><`, `@` or `/` | no |
 | Image Builder `setup.sh` repeated up to 3 times, 120 s apart, only on a `sha256sum ... did NOT match`, within a time budget (`HARNESS_IB_SETUP_BUDGET`, default 3000 s) | `scripts/ib-setup.sh` (retry loop and `HARNESS_IB_SETUP_BUDGET`), `scripts/imagebuilder-make.sh` | the snapshot directory is published file by file: the archive can be newer than its `sha256sums` (runs 41427929552, 41427983225); the budget keeps the retry inside the job timeout (`timeout-minutes` of job `image` in `.github/workflows/images.yml`, 90 min) | no |
 | An image that is too big is a result, not a build failure: accepted only with numbers, compared with the `:too-big` expectation | `scripts/check-image-outcome.sh` | the Image Builder only prints `WARNING: Image file ... is too big` and deletes the image; the size-less warning proves nothing | yes (`:too-big` on a profile) |
 | The released image and `sha256sums` are fetched and checked by us; for `main` the snapshot version is read before and after the download | `scripts/fetch-image.sh` | each snapshot target directory is published on its own, so the image and its checksum can change during the download | no |

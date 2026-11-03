@@ -720,8 +720,10 @@ EOF
 # What imagebuilder-make.sh leaves for the check that the image holds the
 # built apk: the apk metadata, the record apk wrote when it installed the
 # .apk in a scratch root (local-expected.db) and the record in the image root
-# (local-installed.db). ASNFZ4mrze8BI0VniavN7wEjRWc= is the checksum of the
-# built apk, WcaXbNgoDLiKQt3UeHGPhhiX4P0= the one of a package of the feed.
+# (local-installed.db), and the world apk wrote for the install by path
+# (local-world-pinned) with the world of the image root (local-world), which
+# lists the package by name. ASNFZ4mrze8BI0VniavN7wEjRWc= is the checksum of
+# the built apk, WcaXbNgoDLiKQt3UeHGPhhiX4P0= the one of a package of the feed.
 cat >"${ib}/local-apk.dump" <<'DUMP'
 info:
   name: netbird
@@ -730,6 +732,8 @@ info:
 DUMP
 printf 'C:Q1ASNFZ4mrze8BI0VniavN7wEjRWc=\nP:netbird\nV:0.78.1-r1\n\n' >"${ib}/local-expected.db"
 printf 'C:Q1ASNFZ4mrze8BI0VniavN7wEjRWc=\nP:netbird\nV:0.78.1-r1\n\n' >"${ib}/local-installed.db"
+printf 'base-files=1-r1\nnetbird><Q1ASNFZ4mrze8BI0VniavN7wEjRWc=\nowut\n' >"${ib}/local-world-pinned"
+printf 'base-files=1-r1\nnetbird\nowut\n' >"${ib}/local-world"
 export HARNESS_IMAGE_GLOBS='*sysupgrade*'
 collect() {
 	# Arguments: $1 package, $2 version, $3 packages input
@@ -776,6 +780,28 @@ cp -R "${ib}" "${ib_nodump}"
 rm "${ib_nodump}/local-expected.db"
 script_case "collect: missing expected record fails" 1 '' collect_in "${ib_nodump}"
 script_case "collect: local package passes the check" 0 ANY collect_in "${ib}"
+# The world of the image must list the package by name, as the world of the
+# install does apart from the pin.
+ib_pinned=${work}/ib-pinned
+cp -R "${ib}" "${ib_pinned}"
+cp "${ib}/local-world-pinned" "${ib_pinned}/local-world"
+script_case "collect: the pin left in the world of the image fails" 1 '' collect_in "${ib_pinned}"
+case "${sc_err}" in
+*"not a plain name"*) record "collect: the pin in the world is named as the cause" 0 "" ;;
+*) record "collect: the pin in the world is named as the cause" 1 "${sc_err}" ;;
+esac
+ib_world=${work}/ib-world
+cp -R "${ib}" "${ib_world}"
+printf 'base-files=1-r1\nnetbird\n' >"${ib_world}/local-world"
+script_case "collect: a package lost from the world of the image fails" 1 '' collect_in "${ib_world}"
+ib_noworld=${work}/ib-noworld
+cp -R "${ib}" "${ib_noworld}"
+rm "${ib_noworld}/local-world"
+script_case "collect: missing world of the image fails" 1 '' collect_in "${ib_noworld}"
+ib_nopinned=${work}/ib-nopinned
+cp -R "${ib}" "${ib_nopinned}"
+rm "${ib_nopinned}/local-world-pinned"
+script_case "collect: missing world of the install fails" 1 '' collect_in "${ib_nopinned}"
 unset HARNESS_IMAGE_GLOBS
 
 echo

@@ -1,10 +1,12 @@
 #!/usr/bin/env sh
 # Responsibility: check that the ImageBuilder manifest lists the built
 # package at the built version, that the image holds the locally built apk
-# and not a feed package of the same name, and that it lists the packages the
-# caller asked for (and not those it removed), then copy the firmware images (files matching the globs),
-# the manifest and sha256sums of one build to an output directory. A missing
-# or unexpected manifest line, or no image file, is an error.
+# and not a feed package of the same name, that its world lists the package
+# by name (no pin), and that the manifest lists the packages the caller asked
+# for (and not those it removed); then copy the firmware images (files
+# matching the globs), the manifest and sha256sums of one build to an output
+# directory. A missing or unexpected manifest line, or no image file, is an
+# error.
 #
 # Usage:
 #   scripts/collect-images.sh <imagebuilder-out-dir> <image-dir> >> "$GITHUB_ENV"
@@ -58,8 +60,8 @@ manifest_count=$(printf '%s\n' "${manifest}" | wc -l)
 	die "expected one .manifest in ${ib_dir}: ${manifest}"
 expected=
 if [ -n "${package}" ]; then
-	# The version of the .apk metadata is the one the Image Builder was asked
-	# for (name=<version>); the file name must say the same.
+	# The version in the metadata of the .apk is the one the manifest lists;
+	# the file name of the .apk must say the same.
 	[ -f "${ib_dir}/local-apk.dump" ] || die "no local-apk.dump in ${ib_dir}"
 	meta_name=$(adb_info_field "${ib_dir}/local-apk.dump" name)
 	meta_version=$(adb_info_field "${ib_dir}/local-apk.dump" version)
@@ -82,6 +84,9 @@ if [ -n "${package}" ]; then
 	[ -f "${ib_dir}/local-installed.db" ] || die "no local-installed.db in ${ib_dir}"
 	ib_check_installed_is_local "${ib_dir}/local-expected.db" "${ib_dir}/local-installed.db" \
 		"${package}"
+	# The installed record is the built apk, but the world must list the
+	# package by name so that the device upgrades it from the feed.
+	ib_check_world "${ib_dir}/local-world" "${ib_dir}/local-world-pinned" "${package}"
 fi
 # The tokens were validated above, so the glob characters are not in them.
 for token in ${image_packages}; do

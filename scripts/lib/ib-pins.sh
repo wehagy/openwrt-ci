@@ -1,13 +1,23 @@
 #!/usr/bin/env sh
 # Responsibility: install the locally built package in the Image Builder from
-# its .apk file and prove afterwards that the image holds that very apk
-# (sourced, not run). The Image Builder resolves a package name against the
-# local packages/ index and the official feeds together, takes the highest
-# version and, at an equal version, a feed package; no <name> or <name>=<version>
-# selects the local build for sure. A path to the .apk does: apk installs that
-# file itself (world entry <name><><checksum>), whatever the feeds hold. To
-# prove it, the same .apk is installed in a scratch root with the same
-# repositories and the checksum of its record in the installed database
+# its .apk file, prove afterwards that the image holds that very apk, and keep
+# the pin of that install out of the image world (sourced, not run).
+#
+# The Image Builder resolves a package name against the local packages/ index
+# and the official feeds together, takes the highest version and, at an equal
+# version, a feed package; no <name> or <name>=<version> selects the local
+# build for sure. A path to the .apk does: apk installs that file itself,
+# whatever the feeds hold. The price is the world entry apk writes for a file,
+# <name><><checksum>, which pins the device to that very file: a later
+# `apk upgrade` would never take the package from the feed. The world of an
+# official image lists <name> alone, so the world of the image is rewritten to
+# that: the Image Builder copies the FILES directory over the root after the
+# packages are installed, so a FILES/etc/apk/world with the plain names
+# replaces the world apk wrote. The installed database keeps the record of
+# the built .apk (its checksum is what proves the origin).
+#
+# To prove the origin, the same .apk is installed in a scratch root with the
+# same repositories and the checksum of its record in the installed database
 # must be the one of the record in the image root.
 #
 # Needs lib/common.sh. The dumps are the output of `apk adbdump` of the .apk
@@ -128,4 +138,56 @@ ib_check_installed_is_local() {
 	[ "${icl_installed}" = "${icl_expected}" ] ||
 		die "the image holds a $3 that is not the locally built apk (installed ${icl_installed}, local ${icl_expected}); a package of the feed won"
 	printf 'ib-pins: %s installed from the local apk (checksum %s)\n' "$3" "${icl_installed}" >&2
+}
+
+# Print the world apk wrote for the install by path, with the pin of the built
+# package removed: its entry <name><><checksum> becomes <name>, every other
+# line stays as it is. The entry must be there exactly once, and no other
+# entry may be a pin by checksum, a path or a repository tag: those would
+# reach the image through the rewritten file.
+#
+# Arguments:
+#   $1  world file of the root the packages were installed in
+#   $2  name of the built package
+ib_plain_world() {
+	check_package_name "$2"
+	ipw_out=$(awk -v n="$2" '
+		BEGIN { pin = n "><Q1" }
+		substr($0, 1, length(pin)) == pin && substr($0, length(pin) + 1) ~ /^[A-Za-z0-9+\/=]+$/ {
+			print n; hits++; next
+		}
+		{ print }
+		END { if (hits != 1) exit 3 }
+	' "$1") || die "the world $1 has no single entry '$2><checksum' (or cannot be read)"
+	ib_check_plain_names "${ipw_out}"
+	printf '%s\n' "${ipw_out}"
+}
+
+# Abort when a world (the text of an /etc/apk/world) has an entry that is not
+# a plain name: a pin by checksum (><), a repository tag (@) or a path (/).
+#
+# Arguments:
+#   $1  text of the world
+ib_check_plain_names() {
+	icp_bad=$(printf '%s\n' "$1" | grep -n -e '><' -e '@' -e '/') ||
+		icp_bad=
+	[ -z "${icp_bad}" ] || die "the world has an entry that is not a plain name: ${icp_bad}"
+}
+
+# Abort unless the world of the image is the world apk wrote with only the pin
+# of the built package replaced by its plain name, which is what an image
+# built without a package of our own lists.
+#
+# Arguments:
+#   $1  world file of the image root
+#   $2  world file apk wrote for the install by path
+#   $3  package name
+ib_check_world() {
+	icw_expected=$(ib_plain_world "$2" "$3")
+	[ -n "${icw_expected}" ] || die "no world of the install to compare the world of the image with"
+	icw_image=$(cat "$1") || die "cannot read the world $1"
+	ib_check_plain_names "${icw_image}"
+	[ "${icw_image}" = "${icw_expected}" ] ||
+		die "the world of the image is not the world of the install with $3 by name"
+	printf 'ib-pins: the world of the image lists %s by name\n' "$3" >&2
 }

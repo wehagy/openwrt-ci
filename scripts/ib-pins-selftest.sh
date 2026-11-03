@@ -2,8 +2,10 @@
 # Responsibility: prove lib/ib-pins.sh with fixed text, no Image Builder: the
 # composition of the PACKAGES list with the path of the built .apk (names with
 # "-", removals, extra feed packages left as they are), the reading of the apk
-# metadata and the check that the installed package is the one apk installs
-# from the built .apk and not a feed package of the same name and version.
+# metadata, the check that the installed package is the one apk installs
+# from the built .apk and not a feed package of the same name and version, and
+# the world of the image (the pin of the built package replaced by its name,
+# every other entry untouched).
 # Runs in every image job.
 #
 # Usage:
@@ -214,6 +216,87 @@ script_case "check: checksum differing at the end fails" 1 "" \
 write_db "${work}/db-short" "AAAAAAAAAAAA"
 script_case "check: short checksum fails" 1 "" \
 	check_sub "${work}/db-short" "${work}/db-short" chrony
+
+# ---------------------------------------------------------------------------
+# World of the image: apk writes <name><><checksum> for a package installed
+# from a file; the image must list <name> and nothing else changes.
+# ---------------------------------------------------------------------------
+cat >"${work}/world-pinned" <<'WORLD'
+apk-mbedtls
+base-files=1699~f505120278
+chrony><Q1Cf33+0lydRENjGjfQh7edIIaO1U=
+chrony-nts
+htop
+libc=1.2.5-r5
+WORLD
+cat >"${work}/world-plain" <<'WORLD'
+apk-mbedtls
+base-files=1699~f505120278
+chrony
+chrony-nts
+htop
+libc=1.2.5-r5
+WORLD
+plain_sub() {
+	(ib_plain_world "$@")
+}
+plain_text=$(cat "${work}/world-plain")
+script_case "world: the pin becomes the name, the rest stays" 0 "${plain_text}" \
+	plain_sub "${work}/world-pinned" chrony
+# The name of the official image world, and the same package under a longer name.
+script_case "world: a pin of another package fails" 1 "" plain_sub "${work}/world-pinned" htop
+script_case "world: a name that is a prefix of the pinned one fails" 1 "" \
+	plain_sub "${work}/world-pinned" chron
+sed -e 's/^chrony><.*/chrony/' "${work}/world-pinned" >"${work}/world-nopin"
+script_case "world: no pin of the built package fails" 1 "" plain_sub "${work}/world-nopin" chrony
+cat "${work}/world-pinned" "${work}/world-pinned" >"${work}/world-twice"
+script_case "world: two pins fail" 1 "" plain_sub "${work}/world-twice" chrony
+sed -e 's/^htop$/htop@local/' "${work}/world-pinned" >"${work}/world-tag"
+script_case "world: another entry with a repository tag fails" 1 "" plain_sub "${work}/world-tag" chrony
+sed -e 's|^htop$|/tmp/htop.apk|' "${work}/world-pinned" >"${work}/world-path"
+script_case "world: another entry with a path fails" 1 "" plain_sub "${work}/world-path" chrony
+sed -e 's/^htop$/htop><Q1AAAAAAAAAAAAAAAAAAAAAAAAAAA=/' "${work}/world-pinned" >"${work}/world-pin2"
+script_case "world: another pin by checksum fails" 1 "" plain_sub "${work}/world-pin2" chrony
+sed -e 's/^\(chrony><Q1\).*/\1/' "${work}/world-pinned" >"${work}/world-nosum"
+script_case "world: a pin without checksum fails" 1 "" plain_sub "${work}/world-nosum" chrony
+script_case "world: missing file fails" 1 "" plain_sub "${work}/world-none" chrony
+
+world_sub() {
+	(ib_check_world "$@")
+}
+script_case "world check: the image lists the name" 0 "" \
+	world_sub "${work}/world-plain" "${work}/world-pinned" chrony
+case "${sc_err}" in
+*"lists chrony by name"*) record "world check: says what it found" 0 "" ;;
+*) record "world check: says what it found" 1 "${sc_err}" ;;
+esac
+script_case "world check: the image keeps the pin" 1 "" \
+	world_sub "${work}/world-pinned" "${work}/world-pinned" chrony
+case "${sc_err}" in
+*"not a plain name"*) record "world check: the pin is named as the cause" 0 "" ;;
+*) record "world check: the pin is named as the cause" 1 "${sc_err}" ;;
+esac
+sed -e 's/^htop$//' "${work}/world-plain" >"${work}/world-lost"
+script_case "world check: a package of the world lost fails" 1 "" \
+	world_sub "${work}/world-lost" "${work}/world-pinned" chrony
+grep -v '^htop$' "${work}/world-plain" >"${work}/world-short"
+script_case "world check: an entry removed fails" 1 "" \
+	world_sub "${work}/world-short" "${work}/world-pinned" chrony
+sed -e '$a chrony-extra' "${work}/world-plain" >"${work}/world-more"
+script_case "world check: an entry added fails" 1 "" \
+	world_sub "${work}/world-more" "${work}/world-pinned" chrony
+grep -v '^chrony$' "${work}/world-plain" >"${work}/world-noname"
+script_case "world check: the package missing from the world fails" 1 "" \
+	world_sub "${work}/world-noname" "${work}/world-pinned" chrony
+sed -e 's/^chrony$/chrony@local/' "${work}/world-plain" >"${work}/world-imgtag"
+script_case "world check: a repository tag on the name fails" 1 "" \
+	world_sub "${work}/world-imgtag" "${work}/world-pinned" chrony
+# Nothing to compare with must not pass because both sides are empty.
+: >"${work}/world-empty"
+script_case "world check: empty image world and missing install world fail" 1 "" \
+	world_sub "${work}/world-empty" "${work}/world-none" chrony
+script_case "world check: missing image world fails" 1 "" \
+	world_sub "${work}/world-none" "${work}/world-pinned" chrony
 
 printf '%s checks, %s failures\n' "${checks}" "${failures}"
 [ "${failures}" -eq 0 ]

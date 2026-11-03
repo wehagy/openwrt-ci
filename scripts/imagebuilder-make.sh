@@ -14,6 +14,15 @@
 # package in the apk database of the image root) and local-expected.db (the
 # record apk writes when it installs the same .apk in a scratch root).
 #
+# The world of the image lists the package by name, as the world of an
+# official image does, so that `apk upgrade` on the device takes later
+# versions from the feed. apk writes <name><><checksum> for a file, so the
+# packages are installed once with `make manifest` to learn that world, and
+# `make image` gets a FILES directory whose etc/apk/world is that world with
+# the pin replaced by the name (the Image Builder copies FILES over the root
+# after the packages are installed). The worlds of both steps are left as
+# local-world-pinned and local-world for scripts/collect-images.sh.
+#
 # An image that does not fit the flash is not a make failure: check-size only
 # prints "WARNING: Image file ... is too big: <size> > <limit>" and deletes
 # the image (some images are refused earlier by the tool that packs them, e.g.
@@ -87,6 +96,7 @@ printf '%s\n' "${setup_seconds}" >"${out_dir}/setup-seconds"
 # ---------------------------------------------------------------------------
 # Build.
 # ---------------------------------------------------------------------------
+files_dir=
 if [ -n "${package}" ]; then
 	apk_file=$(find_apk "${apk_dir}" "${package}")
 	# The version comes from the metadata of the .apk, not from its file name;
@@ -112,6 +122,30 @@ if [ -n "${package}" ]; then
 		die "cannot sign ${local_apk} with the local key"
 	packages=$(ib_local_packages "${packages}" "${package}" "${local_apk}")
 	printf 'imagebuilder-make: PACKAGES=%s\n' "${packages}"
+	# The world apk writes for the install by path (<name><><checksum>), taken
+	# from the root of an install-only run of the Image Builder.
+	make -s manifest PROFILE="${profile}" PACKAGES="${packages}" \
+		>"${out_dir}/manifest-install.log" 2>&1 ||
+		die "cannot install the packages to learn the world (see manifest-install.log)"
+	target_dir=$(make -s val.TARGET_DIR) || die "cannot read TARGET_DIR of the Image Builder"
+	cp "${target_dir}/etc/apk/world" "${out_dir}/local-world-pinned" ||
+		die "cannot read the world of ${target_dir}"
+	files_dir=$(mktemp -d) || die "cannot create the FILES directory"
+	# The Image Builder copies FILES over the root with its modes: keep them
+	# those of a normal root.
+	mkdir -p "${files_dir}/etc/apk" || die "cannot create ${files_dir}/etc/apk"
+	chmod 755 "${files_dir}" "${files_dir}/etc" "${files_dir}/etc/apk" ||
+		die "cannot set the modes of ${files_dir}"
+	plain_world=$(ib_plain_world "${out_dir}/local-world-pinned" "${package}")
+	printf '%s\n' "${plain_world}" >"${files_dir}/etc/apk/world" ||
+		die "cannot write the plain world"
+	chmod 644 "${files_dir}/etc/apk/world" || die "cannot set the mode of the world"
+fi
+
+# Arguments of `make image`: FILES only with a package of our own (see above).
+set -- PROFILE="${profile}" PACKAGES="${packages}"
+if [ -n "${files_dir}" ]; then
+	set -- "$@" FILES="${files_dir}"
 fi
 
 make_log=${out_dir}/make.log
@@ -119,7 +153,7 @@ make_rc=${out_dir}/make.rc
 start=$(date +%s)
 {
 	rc=0
-	make image PROFILE="${profile}" PACKAGES="${packages}" 2>&1 || rc=$?
+	make image "$@" 2>&1 || rc=$?
 	echo "${rc}" >"${make_rc}"
 } | tee "${make_log}"
 end=$(date +%s)
@@ -135,9 +169,10 @@ find build_dir -type f -name root.squashfs -exec stat -c %s {} + \
 cp -R "bin/targets/${target_path}/." "${out_dir}/" ||
 	die "cannot copy bin/targets/${target_path}"
 
-# The evidence that the image holds the built apk: the record of the package
-# in the apk database of the image root, and the record apk writes for the same
-# .apk in a scratch root (same repositories, so its dependencies resolve).
+# The evidence that the image holds the built apk and lists it by name: the
+# world of the image root, the record of the package in its apk database, and
+# the record apk writes for the same .apk in a scratch root (same
+# repositories, so its dependencies resolve).
 if [ -n "${package}" ]; then
 	installed_dbs=$(find build_dir -path '*/lib/apk/db/installed' -type f) ||
 		die "cannot search build_dir"
@@ -170,4 +205,8 @@ if [ -n "${package}" ]; then
 		>"${out_dir}/local-expected.db"
 	[ -s "${out_dir}/local-expected.db" ] || die "${package} is not in the scratch root"
 	rm -rf "${scratch}"
+	# The world of the image root (not of its pristine copy root.orig-*).
+	cp "${target_dir}/etc/apk/world" "${out_dir}/local-world" ||
+		die "cannot read the world of ${target_dir}"
+	rm -rf "${files_dir}"
 fi

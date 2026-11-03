@@ -107,7 +107,8 @@ list_versions() {
 }
 
 # Delete the package version whose name is a manifest digest; a version that is
-# already gone (not listed, or HTTP 404 on the delete) is not an error.
+# already gone (not listed, or HTTP 404 on the delete and absent from a fresh
+# listing) is not an error.
 # Appends to ${deleted} what it deleted.
 #
 # Arguments:
@@ -123,7 +124,8 @@ delete_version() {
 	*)
 		# A 404 on the delete is a concurrent run that superseded the same
 		# version first (run 41586883056): the version is gone, which is
-		# the goal. Every other error still aborts.
+		# the goal, provided a fresh listing no longer has it (see
+		# lib/ghcr-versions.sh). Every other error still aborts.
 		dv_result=$(ghcr_delete_version "${packages_api}" "${dv_id}")
 		case "${dv_result}" in
 		deleted)

@@ -358,8 +358,11 @@ The caller must grant `packages: write` to the job that calls `build.yml`
     after the delete are printed in the log. An HTTP 404 on the delete
     (`gh: Package not found. (HTTP 404)`, a concurrent run superseded the same
     version first, run 41586883056) is logged as `already deleted by another
-    run` and is not an error; every other error (401, 403, 409, 500, ...)
-    fails the job. `scripts/ghcr-versions-selftest.sh` (step "Version prune
+    run` and is not an error only when a fresh listing of the package versions
+    no longer has the version (GitHub answers 404 for some requests the token
+    may not make; the listing needs the same access as the delete, so a version
+    it still shows was not deleted by anyone and the job fails); every other
+    error (401, 403, 409, 500, ...) fails the job. `scripts/ghcr-versions-selftest.sh` (step "Version prune
     self-test" of the `sdk-image` job) runs `lib/ghcr-versions.sh` against a
     stub `gh`.
   - No `concurrency` group: GitHub cancels the older pending job of a group,

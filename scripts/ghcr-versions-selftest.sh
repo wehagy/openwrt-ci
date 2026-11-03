@@ -1,9 +1,11 @@
 #!/usr/bin/env sh
 # Responsibility: prove the delete of a superseded SDK image version
 # (lib/ghcr-versions.sh, ghcr_delete_version) with a stub gh that answers a
-# chosen HTTP status: 204 and 404 succeed (404: already deleted by another
-# run), 401, 403, 409, 500 and an unrelated message that merely contains
-# "404" fail. Offline; runs in every SDK image job.
+# chosen HTTP status: 204 succeeds; 404 succeeds only when a fresh listing no
+# longer has the version (already deleted by another run) and fails when the
+# version is still listed (a 404 that may hide a missing permission) or the
+# listing fails; 401, 403, 409, 500 and an unrelated message that merely
+# contains "404" fail. Offline; runs in every SDK image job.
 #
 # Usage:
 #   scripts/ghcr-versions-selftest.sh
@@ -33,11 +35,25 @@ work=$(mktemp -d)
 trap 'rm -rf "${work}"' EXIT
 
 # A gh that records its arguments and fails like the real one: a message
-# and the exit code 1, with the text taken from STUB_GH_MESSAGE.
+# and the exit code 1, with the text taken from STUB_GH_MESSAGE, on the delete
+# (-X DELETE). The listing of the versions (the other call) prints
+# STUB_GH_LISTED (the ids it still shows) and fails with exit code 1 when
+# STUB_GH_LIST_FAILS is set.
 mkdir "${work}/bin"
 cat >"${work}/bin/gh" <<'STUB'
 #!/usr/bin/env sh
-printf '%s\n' "$*" >"${STUB_GH_ARGS}"
+printf '%s\n' "$*" >>"${STUB_GH_ARGS}"
+case "$*" in
+*"-X DELETE"*) ;;
+*)
+	[ -z "${STUB_GH_LIST_FAILS}" ] || {
+		echo "gh: Server Error (HTTP 500)" >&2
+		exit 1
+	}
+	[ -z "${STUB_GH_LISTED}" ] || printf '%s\n' "${STUB_GH_LISTED}"
+	exit 0
+	;;
+esac
 if [ -n "${STUB_GH_MESSAGE}" ]; then
 	printf '%s\n' "${STUB_GH_MESSAGE}" >&2
 	exit 1
@@ -47,6 +63,9 @@ STUB
 chmod +x "${work}/bin/gh"
 export PATH="${work}/bin:${PATH}"
 export STUB_GH_ARGS="${work}/args"
+STUB_GH_LISTED=
+STUB_GH_LIST_FAILS=
+export STUB_GH_LISTED STUB_GH_LIST_FAILS
 
 api=/users/wehagy/packages/container/openwrt-sdk
 
@@ -66,6 +85,7 @@ run_delete() {
 delete_case() {
 	STUB_GH_MESSAGE=$5
 	export STUB_GH_MESSAGE
+	: >"${STUB_GH_ARGS}"
 	script_case "$1" "$2" "$3" run_delete
 	if [ -n "$4" ]; then
 		case "${sc_err}" in
@@ -85,6 +105,27 @@ else
 fi
 delete_case "404 already gone" 0 already-gone "already deleted by another run" \
 	"gh: Package not found. (HTTP 404)"
+# The 404 only counts when the fresh listing no longer has the version.
+got_args=$(cat "${work}/args")
+case "${got_args}" in
+*"api --paginate ${api}/versions"*"select(.id == 1485438139)"*)
+	record "404: the versions are listed again" 0 ""
+	;;
+*) record "404: the versions are listed again" 1 "got '${got_args}'" ;;
+esac
+STUB_GH_LISTED=1485438139
+export STUB_GH_LISTED
+delete_case "404 but still listed fails" 1 "" "still listed" \
+	"gh: Not Found (HTTP 404)"
+delete_case "404 but still listed keeps the gh error" 1 "" "gh: Not Found (HTTP 404)" \
+	"gh: Not Found (HTTP 404)"
+STUB_GH_LISTED=
+STUB_GH_LIST_FAILS=1
+export STUB_GH_LISTED STUB_GH_LIST_FAILS
+delete_case "404 and the listing fails fails" 1 "" "cannot list the versions" \
+	"gh: Package not found. (HTTP 404)"
+STUB_GH_LIST_FAILS=
+export STUB_GH_LIST_FAILS
 delete_case "401 fails" 1 "" "cannot delete the version 1485438139" \
 	"gh: Bad credentials (HTTP 401)"
 delete_case "403 fails" 1 "" "cannot delete the version 1485438139" \

@@ -674,9 +674,12 @@ the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci
   the `=` pins the Image Builder itself writes, `base-files=...`, `kernel=...`,
   `libc=...`, stay). The installed database is not touched: it still holds
   the record of the built `.apk`. On the device, `apk upgrade` takes a higher
-  version of the package from the feed; at an equal version it changes
-  nothing, and the image keeps the built `.apk` until the feed has a higher
-  version.
+  version of the package from the feed (`Upgrading chrony (4.8-r3 -> 99.0-r0)`);
+  at an equal version it replaces the built `.apk` with the feed package of
+  that version (`Replacing chrony (4.8-r3 -> 4.8-r3)`), without an error,
+  because a package installed from a file has no repository. `apk add` and
+  `apk del` work as on an official image. Measured on 25.12.2 and on `main`
+  with a package of the same name built by `apk mkpkg`.
 - `scripts/collect-images.sh` requires the line `<package> - <version>` in
   `*.manifest` (version of the built `.apk`, equal to the one in its
   metadata), then that the installed package is the built one: the checksum

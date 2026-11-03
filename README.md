@@ -29,7 +29,7 @@ which calls the workflows below.
     version is found: `releases` (`25.12`: latest `25.12.x` of the releases
     index) or `snapshot` (`main`: the `version.buildinfo` of the target
     directory, e.g. `r37969-5799d2da76`). Both lines also have the build
-    keys (`sdk_tag_suffix`, `sdk_max_age_days`, `packages_branch`,
+    keys (`sdk_tag_suffix`, `image_grace_days`, `packages_branch`,
     `imagebuilder_tag_suffix`).
   - `images.yml`: the globs of the files kept as artifacts. The image
     choices of a caller (profiles, packages) are inputs of `images.yml`, not
@@ -42,8 +42,12 @@ which calls the workflows below.
   - `openwrt-tests.uv.lock`: seed lock of the Python environment of those
     tests (see "Pinned test environment").
 - `scripts/` (POSIX shell, used by the workflows)
-  - SDK image: `resolve-sdk.sh`, `sdk-age-selftest.sh`,
-    `sdk-image-ensure.sh`, `sdk-image-info.sh`, `ghcr-versions-selftest.sh`.
+  - SDK and Image Builder images (the daily refresh writes them, the builds
+    read them): `image-refresh.sh`, `refresh-plan.sh`, `resolve-refresh.sh`,
+    `resolve-sdk.sh`, `image-decide-selftest.sh`, `ghcr-versions-selftest.sh`;
+    the builds' side: `sdk-image-info.sh`, `pull-imagebuilder.sh`,
+    `image-stale-check.sh`. `lib/image-decide.sh` (rebuild/reuse and stale
+    rules), `lib/image-upstream.sh` (the official container's sha256sums).
   - Build: `resolve-build.sh`, `collect-apk.sh`, `build-summary.sh`; feed
     source: `resolve-feed.sh`, `feed-record.sh`, `feed-inputs-selftest.sh`.
   - Test: `validate-inputs.sh`, `caller-inputs-selftest.sh`, `matrix.sh`,
@@ -58,10 +62,11 @@ which calls the workflows below.
     `check-image-outcome.sh`, `collect-images.sh`, `image-summary.sh`.
   - `lib/common.sh`: shared helpers. `lib/selftest.sh` (case bookkeeping of
     the self-tests), `lib/ghcr.sh` (registry reads),
-    `lib/sdk-age.sh` (age rule and reuse/rebuild decision),
+    `lib/image-decide.sh` (rebuild/reuse and stale decisions),
     `lib/sdk-labels.sh` (image label keys), `lib/ghcr-versions.sh` (delete of
     a package version), `lib/ib-pins.sh` (install of the built `.apk` by path and the check).
-- `docker/sdk-image/Dockerfile`: derives the SDK image from the official one.
+- `docker/sdk-image/Dockerfile`, `docker/ib-image/Dockerfile`: derive the SDK image and the
+  snapshot Image Builder image from the official containers (setup.sh run once).
 - `.github/workflows/`
   - `build.yml`: reusable SDK build.
   - `test.yml`: reusable QEMU test.
@@ -103,14 +108,15 @@ which calls the workflows below.
   the caches of `docker/setup-qemu-action`, `docker/setup-buildx-action` and of
   the `docker/build-push-action` build (`type=gha`) in the `sdk` job. No job
   with secrets restores those keys; to remove them, replace the action by
-  inline steps that build `docker/sdk-image` without a cache.
+  inline steps that build `docker/sdk-image` without a cache. The jobs with
+  `packages: write` (`refresh-images.yml`) use no cache at all.
 
 ## Using the base from another repository
 
 ```yaml
 jobs:
   build:
-    permissions: {contents: read, packages: write}
+    permissions: {contents: read}
     uses: wehagy/openwrt-ci/.github/workflows/build.yml@main
     with: {line: "25.12", package: chrony, ci_ref: main}
   test:
@@ -270,18 +276,30 @@ Names that change how a process behaves are refused: `GITHUB_*`, `RUNNER_*`,
   log shows the names of all secrets the caller passed (`"NAME": "***"`), never
   their values.
 
-### SDK image access (`sdk_container`, `build.yml`)
+### Image access (`sdk_container`, `ib_container`, `refresh-images.yml`)
 
-`sdk_container` (default `ghcr.io/wehagy/openwrt-sdk`) names the GHCR
-repository of the SDK image. Reusing a fresh image needs only a public read.
-When a run has to rebuild it, `sdk-image` pushes with the caller's
-`GITHUB_TOKEN`, which needs the package to allow that repository: GitHub >
-Packages > the package named by `sdk_container` (`openwrt-sdk` by default) >
-Package settings > Manage Actions access > Add
-Repository > the calling repository, role Write (Admin to also delete the
-superseded `-prev` version). A denied push fails the job with
+`sdk_container` (default `ghcr.io/wehagy/openwrt-sdk`) and `ib_container`
+(default `ghcr.io/wehagy/openwrt-imagebuilder`) name the GHCR repositories of
+the SDK and Image Builder images. `build.yml` and `images.yml` only read them,
+anonymously, so both packages must be public and no job of those workflows
+has `packages: write`. The images are written by `refresh-images.yml`, which
+the caller schedules daily; its jobs push with the caller's `GITHUB_TOKEN`,
+which needs, for each of the two packages: GitHub > Packages > the package >
+Package settings > Manage Actions access > Add Repository > the calling
+repository, role Write (Admin to also delete the superseded `-prev`
+version). A package that does not exist yet is created by the first push,
+private: set it to public (Package settings > Change visibility) before the
+builds read it. A denied push fails the job with
 `::error::push of ... denied. The GITHUB_TOKEN of <repo> needs write access to
 the package ...` after printing the registry error.
+
+Refresh by hand (all images; only those whose upstream changed are rebuilt;
+`-f force=true` rebuilds the others too):
+
+    gh workflow run refresh-images.yml --repo <owner>/<caller-repository>
+
+A build or image job that finds its image missing or private fails with this
+command in the message (`::error title=Image missing::`).
 
 ### Known limits
 
@@ -304,25 +322,23 @@ Inputs (`line` and `package` required):
 | `package` | package to build, a directory of `openwrt/packages`        | `[a-z0-9][a-z0-9._+-]*`, <= 128 chars |
 
 Optional inputs: `archs` and `profiles` (see "Architectures");
-`refresh_sdk` (boolean, default `false`): rebuild the SDK
-images of the line even when they are fresh; `sdk_container` (see above);
+`sdk_container` (see above);
 `feed_repository` and `feed_ref` (see "Feed source"); `ci_ref` (see above).
 Outputs: `feed_repository`, `feed_ref` and `feed_sha` (see "Feed source").
 
-The caller must grant `packages: write` to the job that calls `build.yml`
-(`ci.yml` does); the workflow itself needs it only in `sdk-image`.
+The workflow only reads the SDK images: it needs no `packages: write`
+(`refresh-images.yml` writes them, see below). There is no `refresh_sdk` input.
 
-- Three jobs, `feed` once and the other two per architecture of the `archs`
+- Two jobs: `feed` once and `sdk` (the build) per architecture of the `archs`
   input (`fail-fast: false`; by default `x86_64`, `aarch64_generic`,
-  `mipsel_24kc`, `mips_24kc`, those of the QEMU test targets). `sdk` (the build)
-  needs `sdk-image`, which waits for all the architectures.
+  `mipsel_24kc`, `mips_24kc`, those of the QEMU test targets).
 - The SDK image repository is named once, by the workflow `env`
   `HARNESS_SDK_CONTAINER` (the `sdk_container` input, default
-  `ghcr.io/wehagy/openwrt-sdk`): `sdk-image` publishes it, `sdk` reads it and
+  `ghcr.io/wehagy/openwrt-sdk`): the daily refresh publishes it, `sdk` reads it and
   passes it to the action as `CONTAINER`. `scripts/resolve-sdk.sh` has no
   default.
 - `scripts/resolve-build.sh` validates the inputs and reads `sdk_tag_suffix`,
-  `sdk_max_age_days` and `packages_branch` from `lines.yml`.
+  `image_grace_days` and `packages_branch` from `lines.yml`.
   - Official SDK container: `docker.io/openwrt/sdk:<arch>-<sdk_tag_suffix>`.
     Snapshot containers ship only `setup.sh`, which downloads the ~280 MB SDK
     from the OpenWrt mirror (13-14 min from the runners).
@@ -334,86 +350,36 @@ The caller must grant `packages: write` to the job that calls `build.yml`
     the download.
   - Default feed ref of `openwrt/packages`: `openwrt-25.12` for `25.12`,
     `master` for `main` (the `packages_branch` key).
-- Job `sdk-image` (`scripts/sdk-image-ensure.sh`), lazy refresh per (line,
-  arch):
-  - Starts with `scripts/sdk-age-selftest.sh`: fixed timestamps prove the age
-    rule and `sdk_decide`, the one function that chooses `reuse` or
-    `rebuild` (missing, unreadable creation time, created before the
-    `refresh_sdk` request, stale, fresh up to and including
-    `sdk_max_age_days`, created in the future), so a wrong comparison or a
-    swapped branch fails the job.
-  - Age: read from the registry API with `curl`, without pulling: the label
-    `org.opencontainers.image.created` in the image config of
-    `<sdk_container>:<tag>`, set to the time just before
-    `setup.sh` ran. An unreadable label is rebuilt, which heals it.
-  - Recipe: the label `io.github.wehagy.openwrt-ci.dockerfile-sha256` holds
-    the sha256 of `docker/sdk-image/Dockerfile`; an image with another value,
-    or none, is rebuilt however young (`lib/sdk-age.sh`, `sdk_decide`, proved
-    by `sdk-age-selftest.sh`). The Dockerfile installs `shfmt` (pinned
-    release binary, sha256 checked, version checked; the build fails
-    otherwise), which the init-script format check of the SDK needs.
-  - The image is pushed as one plain image manifest (`--provenance=false
-    --sbom=false`): an index with attestation manifests would add untagged
-    package versions that the delete of an old version would leave behind,
-    and `lib/ghcr.sh` rejects an index.
-  - Missing image, other Dockerfile, age over `sdk_max_age_days` (1 day for both lines) or
-    `refresh_sdk`: pull the official container, run `setup.sh` in
-    `docker build`, add labels, `docker buildx build --push`.
-  - Retention: the superseded image is kept as `<tag>-prev` (current plus one
-    previous), so a build that pinned it by digest keeps working. The
-    package version that was `<tag>-prev` is deleted (`gh api -X DELETE
-    /users/<owner>/packages/container/<name>/versions/<id>`, or `/orgs/<owner>/...`
-    for an organization; `<name>` is the last component of `sdk_container`,
-    `openwrt-sdk` by default; the version whose `name` is its manifest
-    digest). The package versions before and
-    after the delete are printed in the log. An HTTP 404 on the delete
-    (`gh: Package not found. (HTTP 404)`, a concurrent run superseded the same
-    version first, run 41586883056) is logged as `already deleted by another
-    run` and is not an error only when a fresh listing of the package versions
-    no longer has the version (GitHub answers 404 for some requests the token
-    may not make; the listing needs the same access as the delete, so a version
-    it still shows was not deleted by anyone and the job fails: seen in run 41629411610, where version 1492410297 stayed listed after the 404, as did 1485456882 after the 404 of run 41617228364, so the delete does not work with that token); every other
-    error (401, 403, 409, 500, ...) fails the job. `scripts/ghcr-versions-selftest.sh` (step "Version prune
-    self-test" of the `sdk-image` job) runs `lib/ghcr-versions.sh` against a
-    stub `gh`.
-  - No `concurrency` group: GitHub cancels the older pending job of a group,
-    which would cancel the build of a run when 3 runs (or several packages
-    of one line) need the same rebuild. Instead the decision is made again
-    after the local build, just before the push; a run that finds a fresh
-    image pushed meanwhile discards its build (`another run pushed ...`).
-    Runs that finish their builds together can still push twice: the last
-    push holds the tag, the other image stays untagged (`warn: ... was moved
-    by another run`), a leftover of about 1 GB to delete by hand.
-  - Permissions: `contents: read`, `packages: write` (the `GITHUB_TOKEN` of the
-    calling repository pushes and deletes; see "SDK image access"). The label
-    `org.opencontainers.image.source` names the harness repository
-    (`HARNESS_CI_REPOSITORY`); the package must be public, because `sdk` reads
-    it anonymously.
+- No job rebuilds an SDK image: `refresh-images.yml` does (see "Reusable
+  workflow `refresh-images.yml`"). `feed` starts with
+  `scripts/image-decide-selftest.sh` (the stale rule, the readers of the
+  labels and of the official container's sha256sums, with a stub `curl`).
 - The `sdk` job step `Pin the SDK image` (`scripts/sdk-image-info.sh`) reads
-  the image anonymously and fails if it is not public or its labels are
-  invalid. It does not apply the age rule again: `sdk-image` decided it for
-  this run, so an image reused at 23 h 55 min does not fail a build that
-  starts after 24 h. It records `<tag>@<digest>` (`HARNESS_SDK_PIN`), digest,
-  creation time, SDK archive and its sha256, and `reused` or `rebuilt` (the
-  image labels carry the run id and attempt that built it).
+  the image anonymously and fails if it is missing, not public or its labels
+  are invalid, with the refresh command in the message. It records
+  `<tag>@<digest>` (`HARNESS_SDK_PIN`), digest, creation time, SDK archive and
+  its sha256. A stale image (`scripts/image-stale-check.sh`: the sha256 of its
+  archive differs from the one the sha256sums at the label
+  `io.github.wehagy.openwrt-ci.upstream-url` lists now, and it is older than
+  `image_grace_days`) only raises `::warning title=Image stale::`; so does a
+  check that cannot be made (labels missing, sha256sums not downloadable).
   `openwrt/gh-action-sdk` builds `FROM $CONTAINER:$ARCH` with `ARCH` set to
-  the pin, so the build reads exactly the digest of the summary even if
-  another run moves the tag meanwhile.
+  the pin, so the build reads exactly the digest of the summary even if the
+  refresh moves the tag meanwhile.
 - The full feed tree is checked out (Go packages include `lang/golang` by
   relative path; by default `openwrt/packages`, see "Feed source"), then built
   with `openwrt/gh-action-sdk` pinned to commit `f5813d30`.
 - `scripts/collect-apk.sh` takes the one `<package>-<version>.apk` of the SDK
   output (none or several fail the job).
 - The job summary (`scripts/build-summary.sh`) lists line, arch, SDK image and
-  digest and pin, its state (`reused` or `rebuilt`), creation date, SDK archive and
+  digest and pin, creation date, SDK archive and
   sha256, feed repository, ref and commit, package version and build
-  duration. The `sdk-image` job summary records the decision and, for a
-  rebuild, the deleted version.
+  duration.
 - Artifact: `apk-<package>-<line>-<arch>` (the `.apk` alone).
 
 ### Architectures (`archs`, `profiles`)
 
-The architecture matrix of `sdk-image` and `sdk` is computed by the `feed` job
+The architecture matrix of `sdk` (and, in `refresh-images.yml`, of the SDK images) is computed by the `feed` job
 (`scripts/resolve-archs.sh`), so an invalid value fails before an SDK image is
 rebuilt.
 
@@ -433,11 +399,12 @@ rebuilt.
   architectures of its images are built without being named. A caller that
   wants only the architecture of one profile passes `archs: "@profiles"`.
 - A new architecture needs no change here: its SDK image
-  `<sdk_container>:<arch>-<suffix>` is missing, so `sdk-image` builds and pushes
-  it (see above; the caller needs write access to the package). The official
-  container `docker.io/openwrt/sdk:<arch>-<suffix>` must exist; a name that
-  does not exist fails at the pull in `sdk-image`.
-- Job names (`<line> <arch>`, `sdk-image <line> <arch>`) and the artifact
+  `<sdk_container>:<arch>-<suffix>` is missing, so the `sdk` job fails with the
+  refresh command; the caller of `refresh-images.yml` must list the architecture
+  (through its targets or profiles). The official container
+  `docker.io/openwrt/sdk:<arch>-<suffix>` must exist; a name that does not
+  exist fails at the pull in the refresh.
+- Job names (`<line> <arch>`) and the artifact
   `apk-<package>-<line>-<arch>` are unchanged; only the set of architectures
   moved from the workflow file to the inputs.
 
@@ -458,8 +425,8 @@ a test repository, an upstream pull request) passes:
   characters, with no `..`, no leading `-`, no leading, trailing or doubled `/`,
   no component starting with `.`, no `.lock` or `.` ending; any other `refs/`
   name is refused.
-- The job `feed` runs first (it also gates `sdk-image`, so an invalid input
-  fails before an SDK image is rebuilt). It checks the feed out, reads the
+- The job `feed` runs first (it also gates `sdk`, so an invalid input
+  fails before an architecture job starts). It checks the feed out, reads the
   commit (`scripts/feed-record.sh`) and exposes it as the workflow outputs
   `feed_repository`, `feed_ref` and `feed_sha`; its job summary has the
   section `feed source` with the three values. The `sdk` jobs check out
@@ -483,6 +450,64 @@ a test repository, an upstream pull request) passes:
   that must be refused (`..`, leading `-`, other `refs/` names, a newline, a
   forged `::error::` line) and the defaults of both lines. It needs `yq` and
   `git`.
+
+## Reusable workflow `refresh-images.yml`
+
+The only workflow that writes the SDK and Image Builder images on GHCR. The
+caller schedules it daily and by hand (`wehagy/openwrt-ci-packages`:
+`.github/workflows/refresh-images.yml`) and passes the lists it derives from
+its package configs. Inputs: `lines` (required, lines of `harness/lines.yml`,
+separated by spaces), `targets` (QEMU test targets whose architectures get an
+SDK image; empty: all), `profiles` (as in `images.yml`; their architectures
+get an SDK image and their targets an Image Builder image), `force` (boolean,
+default `false`), `sdk_container`, `ib_container`, `ci_ref`. The caller grants
+`packages: write` to the calling job.
+
+- Job `plan`: self-tests (`image-decide-selftest.sh`,
+  `ghcr-versions-selftest.sh`, `ib-setup-selftest.sh`,
+  `image-inputs-selftest.sh`), then `scripts/refresh-plan.sh`: one SDK image
+  per (line, architecture) (`scripts/resolve-archs.sh`, as `build.yml`) and
+  one Image Builder image per (line, target, subtarget) of the profiles
+  (`scripts/resolve-profiles.sh`, checked against `profiles.json`). An unknown
+  line or profile fails here, before any image job.
+- Jobs `sdk` and `ib` (`packages: write`, one job per image, `fail-fast:
+  false`; the only jobs with that permission; they check out only the harness
+  at `ci_ref`, run no package, feed or pull request code and use no cache):
+  `scripts/resolve-refresh.sh` and `scripts/image-refresh.sh`.
+- SDK image `<sdk_container>:<arch>-<sdk_tag_suffix>` and, for a snapshot
+  line, Image Builder image `<ib_container>:<target>-<subtarget>-<imagebuilder_tag_suffix>`
+  (mode `build`): the official container is pulled; its environment (`TARGET`,
+  `DOWNLOAD_FILE`, `VERSION_PATH`, `FILE_HOST`) names the `sha256sums` that its
+  `setup.sh` reads; the one line `DOWNLOAD_FILE` matches there (the `grep` of
+  `setup.sh`) is the upstream archive and its sha256 (`lib/image-upstream.sh`).
+  The image is rebuilt only when it is missing, its recipe
+  (`io.github.wehagy.openwrt-ci.dockerfile-sha256`, the sha256 of
+  `docker/sdk-image/Dockerfile` or `docker/ib-image/Dockerfile`), its upstream
+  address (`...upstream-url`) or the archive sha256 (`...sdk-archive-sha256`)
+  differs from the label, or with `force`. There is no age rule: an image whose
+  upstream did not change is kept however old (`lib/image-decide.sh`,
+  `image_decide`, proved by `image-decide-selftest.sh`).
+- Image Builder image of a release line (mode `mirror`, `25.12`): a copy of
+  `docker.io/openwrt/imagebuilder:<target>-<subtarget>-<latest release>`, whose
+  Image Builder is already set up (`RUN_SETUP=1` in `openwrt/docker`); the
+  image keeps the tag of the line (`...-openwrt-25.12`) and the labels
+  `...release`, `...source-image` and `...source-digest`; it is rebuilt when
+  that container's digest changed (a new release or a rebuilt container).
+- The build runs `setup.sh` through `scripts/ib-setup.sh` (inside the
+  Dockerfile): it is repeated only when the archive does not match the
+  `sha256sums` (a snapshot directory is published file by file), at most 3
+  attempts within a time budget, with a `::warning::` for each retry; any other
+  failure fails the job. After the build the archive name must equal the one
+  looked up before, and the labels carry the sha256 of the archive the image
+  holds. The decision is made again just before the push (no lock); a job that
+  finds an identical image pushed meanwhile discards its build.
+- Push and retention are those of the former lazy refresh: one plain image
+  manifest (`--provenance=false --sbom=false`), the superseded image kept as
+  `<tag>-prev`, the version that was `<tag>-prev` deleted, a 404 on the delete
+  accepted only when a fresh listing no longer has the version
+  (`lib/ghcr-versions.sh`). The label `org.opencontainers.image.source` names
+  the repository whose token pushed.
+- Not in GHCR: the Go build cache and the QEMU firmware images.
 
 ## Reusable workflow `test.yml`
 
@@ -618,8 +643,14 @@ the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci
   validators, the resolution against a fake mirror (`file://` URLs, no network)
   and the manifest check with fixed inputs.
 
-- Image Builder: `docker.io/openwrt/imagebuilder:<target>-<subtarget>-<tag>`
-  (`scripts/resolve-image.sh`).
+- Image Builder: the harness image `<ib_container>:<target>-<subtarget>-<imagebuilder_tag_suffix>`
+  (default `ghcr.io/wehagy/openwrt-imagebuilder`, `scripts/resolve-image.sh`), read only: the daily refresh
+  (`refresh-images.yml`) copies the official release container (`25.12`) or
+  runs the `setup.sh` of the snapshot container once (`main`). A missing image
+  fails the job with the refresh command; a stale one only warns
+  (`scripts/pull-imagebuilder.sh`, `scripts/image-stale-check.sh`). The image
+  jobs download no Image Builder. Of the text below, `<tag>` is the tag of the
+  official container the image is made from.
   - `25.12` (`release_source: releases`): `<tag>` is the latest `25.12.x`
     release, found as `test.yml` finds its release (`latest_release` in
     `scripts/lib/common.sh`). The release image contains the Image Builder.
@@ -753,7 +784,7 @@ the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci
 Tests the base with the sample package `chrony`. Every call passes
 `ci_ref: ${{ github.sha }}`, the commit under test. On push to `feat/**` and on
 `workflow_dispatch`.
-Dispatch inputs: `refresh_sdk` (boolean, passed to `build.yml`) and `lines`
+Dispatch inputs: `lines`
 (`both`, `25.12` or `main`: the other build job is skipped); `package`
 (default `chrony`), `feed_repository` and `feed_ref` (passed to `build.yml`,
 see "Feed source"); `stages` (`all`, or `build` to skip the test and image
@@ -866,7 +897,7 @@ repository can change it with an input of the reusable workflows.
 | VM memory 128M for every target, as upstream; overridable | `memory` of each target in `harness/targets.yml` and `memory` input of `.github/workflows/test.yml` (applied by `scripts/prepare-target.sh`) | not a deviation by default; netbird needs 256M (OOM-killed at 128M on `x86-64`, run 41480369349) | yes (`memory`) |
 | `apk update` repeated up to 5 times, 5 s apart, only when stderr has `Failed to send request: Operation not permitted` | `harness/tests/harness_util.py` (`APK_UPDATE_*`, `apk_update`), `harness/tests/conftest.py` (F3) | one of the parallel fetches of the first `apk update` was lost on `malta-le` and `malta-be` (runs 41427983225, 41360955048); any other failure fails at once | no |
 | `openwrt-tests` follows `main` (one commit per run) and labgrid comes from PyPI (`>=26,<27`) instead of the `aparcar/labgrid` fork, branch `staging`, that its `pyproject.toml` names (`[tool.uv.sources]`, ignored with `UV_NO_SOURCES=1`); Python 3.15; the other dependencies stay at a seed lock of our own | `LABGRID_REQUIREMENT` in `scripts/lib/uv-lock.sh`, `harness/openwrt-tests.uv.lock`, `scripts/prepare-tests-env.sh`, `scripts/resolve-tests-ref.sh`, `UV_PYTHON` and the steps "Resolve the openwrt-tests commit" and "Install the openwrt-tests environment" of `.github/workflows/test.yml` | user decision: always the latest upstream tests and the latest stable labgrid, without a major jump; the fork `staging` branch was only a pin to a development commit, and the PyPI release of the 26 series is what upstream's own default (`labgrid>=25.0`) resolves to once the source is ignored. The price is that a run can change with no commit of ours; the resolved versions are shown in the summary | no |
-| Own SDK image on GHCR, `ghcr.io/wehagy/openwrt-sdk:<arch>-<suffix>`, rebuilt lazily when older than 1 day (`sdk_max_age_days`) or built from another `docker/sdk-image/Dockerfile` (label with its sha256), instead of the SDK download that `openwrt/gh-action-sdk` does in every run | `docker/sdk-image/Dockerfile`, `scripts/sdk-image-ensure.sh`, `sdk_tag_suffix` and `sdk_max_age_days` of each line in `harness/lines.yml`, `.github/workflows/build.yml` (`sdk-image`) | the snapshot SDK container ships only `setup.sh`, which downloads about 280 MB from the mirror in 13 to 14 minutes in every job; the image is pinned by digest per run | yes (`sdk_container`, `refresh_sdk`) |
+| Own SDK and Image Builder images on GHCR (`ghcr.io/wehagy/openwrt-sdk:<arch>-<suffix>`, `ghcr.io/wehagy/openwrt-imagebuilder:<target>-<subtarget>-<suffix>`), refreshed by a separate daily job and only read by the runs (no `packages: write`, no rebuild by age, no `refresh_sdk`), instead of the SDK or Image Builder download that every job did | `docker/sdk-image/Dockerfile`, `docker/ib-image/Dockerfile`, `scripts/image-refresh.sh`, `.github/workflows/refresh-images.yml`, `sdk_tag_suffix`, `imagebuilder_tag_suffix` and `image_grace_days` of each line in `harness/lines.yml` | the snapshot SDK container ships only `setup.sh`, which downloads about 280 MB (13 to 14 minutes) and an Image Builder up to 8 to 15 minutes in every job; an image is rebuilt only when its upstream sha256 (or the release container digest) changed; the image is pinned by digest per run | yes (`sdk_container`, `ib_container`) |
 | `shfmt` v3.14.1 (release binary, sha256 pinned) installed in the SDK image; the job fails if the image has no `shfmt` | `docker/sdk-image/Dockerfile`, step "Check that the SDK image has shfmt" of `.github/workflows/build.yml` | the upstream SDK image has no `shfmt`, so the init-script format check of `make package/<pkg>/check` is a no-op there (openwrt/packages run 41512251371, job 125513520170: `find: 'shfmt': No such file or directory`; gh-action-sdk issue #37; the check was added in gh-action-sdk da3664e, 2021-08-08); here it runs, and a package cannot override it | no |
 | `openwrt/gh-action-sdk` pinned to commit `f5813d30`, called with `CONTAINER` = our image, `ARCH` = `<tag>@<digest>`, `FEED_DIR` = the full feed checkout | the `openwrt/gh-action-sdk` step of job `sdk` in `.github/workflows/build.yml` | no tags upstream; a reproducible build of the digest that was pinned; Go packages include `lang/golang` by relative path | no |
 | The built `.apk` is copied to the Image Builder `packages/` directory and signed there with the local key of the Image Builder (`apk adbsign`) | `scripts/imagebuilder-make.sh` | the package under test must be in the image; a file installed by path is not covered by the signature of the `packages/` index (made by the Image Builder with `apk mkndx --allow-untrusted`), and the Image Builder (`CONFIG_SIGNATURE_CHECK=y`) refuses an unsigned one (`UNTRUSTED signature`, measured on 25.12.2) | no |
@@ -876,4 +907,4 @@ repository can change it with an input of the reusable workflows.
 | Image Builder `setup.sh` repeated up to 3 times, 120 s apart, only on a `sha256sum ... did NOT match`, within a time budget (`HARNESS_IB_SETUP_BUDGET`, default 3000 s) | `scripts/ib-setup.sh` (retry loop and `HARNESS_IB_SETUP_BUDGET`), `scripts/imagebuilder-make.sh` | the snapshot directory is published file by file: the archive can be newer than its `sha256sums` (runs 41427929552, 41427983225); the budget keeps the retry inside the job timeout (`timeout-minutes` of job `image` in `.github/workflows/images.yml`, 90 min) | no |
 | An image that is too big is a result, not a build failure: accepted only with numbers, compared with the `:too-big` expectation | `scripts/check-image-outcome.sh` | the Image Builder only prints `WARNING: Image file ... is too big` and deletes the image; the size-less warning proves nothing | yes (`:too-big` on a profile) |
 | The released image and `sha256sums` are fetched and checked by us; for `main` the snapshot version is read before and after the download | `scripts/fetch-image.sh` | each snapshot target directory is published on its own, so the image and its checksum can change during the download | no |
-| Job timeouts: 45 min per QEMU and per SDK job, 90 min per Image Builder job, 5 to 10 min for the setup jobs | `timeout-minutes` of the jobs of `.github/workflows/test.yml` (`targets`, `qemu`), `.github/workflows/build.yml` (`feed`, `sdk-image`, `sdk`) and `.github/workflows/images.yml` (`profiles`, `image`) | a hung VM or download must not hold a runner for the 6 hour default | no |
+| Job timeouts: 45 min per QEMU and per SDK job, 90 min per Image Builder job, 5 to 10 min for the setup jobs | `timeout-minutes` of the jobs of `.github/workflows/test.yml` (`targets`, `qemu`), `.github/workflows/build.yml` (`feed`, `sdk`), `.github/workflows/refresh-images.yml` (`plan` 15 min, `sdk` 60 min, `ib` 90 min) and `.github/workflows/images.yml` (`profiles`, `image`) | a hung VM or download must not hold a runner for the 6 hour default | no |

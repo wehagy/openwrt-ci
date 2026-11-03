@@ -699,3 +699,31 @@ job fails if the lock no longer matches that `pyproject.toml`. To regenerate
 after changing the ref, copy the `pyproject.toml` of the new ref to an empty
 directory, run `uv lock --python 3.15` there and copy `uv.lock` to
 `harness/openwrt-tests.uv.lock`.
+
+## Deviations from upstream
+
+Every place where the base differs from the default of the project it builds
+on: [aparcar/openwrt-tests](https://github.com/aparcar/openwrt-tests) (QEMU
+targets and fixtures, defaults checked at `b3a04b2`), labgrid,
+[openwrt/gh-action-sdk](https://github.com/openwrt/gh-action-sdk), the Image
+Builder and the official OpenWrt images. "Package" says whether a calling
+repository can change it with an input of the reusable workflows.
+
+| What | Where | Why | Package |
+|------|-------|-----|---------|
+| KVM on `x86-64`: `-enable-kvm` added to `extra_args`, `/dev/kvm` opened to all users | `scripts/prepare-target.sh:36-37`, `.github/workflows/test.yml:228-234`, `kvm: true` in `harness/targets.yml:25` | labgrid's `QEMUDriver` never adds `-enable-kvm`; the runner offers `/dev/kvm` for the x86 guest only (`kvm: false` for the others) | no |
+| `dnsmasq` `filter_aaaa=1` in the VM | `harness/tests/conftest.py:60-62` (F1) | the runner has no IPv6 egress but `downloads.openwrt.org` has an AAAA record, so `apk` waited on an unreachable address | no |
+| `network.wan` created on `eth1` (dhcp) when the image has none | `harness/tests/conftest.py:66-72` (F2) | `malta-le` on `25.12` and `malta-be` on both lines define only `lan`, so the VM had no default route | no |
+| `apk add --allow-untrusted --force-non-repository` for the package under test | `harness/tests/test_package.py:57-59` | the CI-built `.apk` is unsigned; the initramfs targets have no persistent overlay, so `apk` refuses a local file otherwise | no |
+| Timeouts above the 30 s default of `run_check`/`wait_for`: `CMD_TIMEOUT` 600 s, `NETWORK_TIMEOUT` 120 s, `SERVICE_TIMEOUT` 60 s (`QUERY_TIMEOUT` 30 s is the labgrid default) | `harness/tests/conftest.py:41-44`, `harness/tests/test_package.py:30-37` | emulated targets without KVM are slow (install, `apk update`, service start) | no |
+| Timeout of the `apk` commands of the test: none by default (labgrid `SSHDriver.run` has `timeout=None`); a caller can set 30 to 600 s | `harness/tests/harness_util.py` (`apk_timeout_kwargs`), `apk_timeout` input of `.github/workflows/test.yml` | `apk info -L` right after the install took 0.5 to 15 s and once more than 30 s (run 41437522326, job 125258840649, `x86-64` on `main`, netbird at 128M); the measured duration is recorded as `apk_info_L_seconds` | yes (`apk_timeout`) |
+| VM memory 128M for every target, as upstream; overridable | `harness/targets.yml:7-12` and `memory` input of `.github/workflows/test.yml` (applied by `scripts/prepare-target.sh:33`) | not a deviation by default; netbird needs 256M (OOM-killed at 128M on `x86-64`, run 41480369349) | yes (`memory`) |
+| `apk update` repeated up to 5 times, 5 s apart, only when stderr has `Failed to send request: Operation not permitted` | `harness/tests/harness_util.py:11-15`, `harness/tests/conftest.py:109` (F3) | one of the parallel fetches of the first `apk update` was lost on `malta-le` and `malta-be` (runs 41427983225, 41360955048); any other failure fails at once | no |
+| `openwrt-tests` pinned to a commit, Python 3.15 and a lock of our own (`harness/openwrt-tests.uv.lock`, `uv sync --locked`); labgrid from the `aparcar/labgrid` fork, branch `staging`, at `475a767` | `.github/workflows/test.yml:88,91,271-281`, `harness/openwrt-tests.uv.lock:443-445` | reproducible runs: the environment never changes between two runs of the same commit. A next slice makes `openwrt-tests` follow `main` and labgrid `>=26,<27` from PyPI | no |
+| Own SDK image on GHCR, `ghcr.io/wehagy/openwrt-sdk:<arch>-<suffix>`, rebuilt lazily when older than 1 day (`sdk_max_age_days`), instead of the SDK download that `openwrt/gh-action-sdk` does in every run | `docker/sdk-image/Dockerfile`, `scripts/sdk-image-ensure.sh`, `harness/lines.yml:12,50,60`, `.github/workflows/build.yml` (`sdk-image`) | the snapshot SDK container ships only `setup.sh`, which downloads about 280 MB from the mirror in 13 to 14 minutes in every job; the image is pinned by digest per run | yes (`sdk_container`, `refresh_sdk`) |
+| `openwrt/gh-action-sdk` pinned to commit `f5813d30`, called with `CONTAINER` = our image, `ARCH` = `<tag>@<digest>`, `FEED_DIR` = the full feed checkout | `.github/workflows/build.yml:329-337` | no tags upstream; a reproducible build of the digest that was pinned; Go packages include `lang/golang` by relative path | no |
+| The built `.apk` is copied to the Image Builder `packages/` directory (unsigned, indexed and signed by the Image Builder itself) | `scripts/imagebuilder-make.sh` | the package under test must be in the image; the Image Builder (`CONFIG_SIGNATURE_CHECK=y`) indexes `packages/` with `apk mkndx --allow-untrusted` | no |
+| Image Builder `setup.sh` repeated up to 3 times, 120 s apart, only on a `sha256sum ... did NOT match`, within a time budget (`HARNESS_IB_SETUP_BUDGET`, default 3000 s) | `scripts/ib-setup.sh:36-77`, `scripts/imagebuilder-make.sh` | the snapshot directory is published file by file: the archive can be newer than its `sha256sums` (runs 41427929552, 41427983225); the budget keeps the retry inside the job timeout (`.github/workflows/images.yml:154`, 90 min) | no |
+| An image that is too big is a result, not a build failure: accepted only with numbers, compared with the `:too-big` expectation | `scripts/check-image-outcome.sh` | the Image Builder only prints `WARNING: Image file ... is too big` and deletes the image; the size-less warning proves nothing | yes (`:too-big` on a profile) |
+| The released image and `sha256sums` are fetched and checked by us; for `main` the snapshot version is read before and after the download | `scripts/fetch-image.sh` | each snapshot target directory is published on its own, so the image and its checksum can change during the download | no |
+| Job timeouts: 45 min per QEMU and per SDK job, 90 min per Image Builder job, 5 to 10 min for the setup jobs | `.github/workflows/test.yml:163`, `.github/workflows/build.yml:123,206,257`, `.github/workflows/images.yml:71,154` | a hung VM or download must not hold a runner for the 6 hour default | no |

@@ -53,7 +53,9 @@ sdk_freshness() {
 # scripts/sdk-image-ensure.sh and proved by scripts/sdk-age-selftest.sh.
 # Rebuild when the image is missing, its creation time is unreadable (the
 # rebuild heals it), it was created before a requested refresh, or it is stale
-# (see sdk_freshness). Otherwise reuse.
+# (see sdk_freshness), or it was built from another Dockerfile than the current
+# one (an image of an older recipe is never reused, however young). Otherwise
+# reuse.
 #
 # Arguments:
 #   $1  image exists: true or false
@@ -62,9 +64,15 @@ sdk_freshness() {
 #   $4  maximum age, days
 #   $5  refresh point, Unix seconds: an image created before it is rebuilt;
 #       empty when no refresh was requested
+#   $6  sha256 of the current docker/sdk-image/Dockerfile
+#   $7  the same, as the image label recorded it (empty when it has none)
 sdk_decide() {
 	if [ "$1" != true ]; then
 		printf 'rebuild image missing\n'
+		return 0
+	fi
+	if [ "$7" != "$6" ]; then
+		printf 'rebuild Dockerfile changed since the image was built\n'
 		return 0
 	fi
 	if ! sd_created=$(sdk_parse_utc "$2"); then

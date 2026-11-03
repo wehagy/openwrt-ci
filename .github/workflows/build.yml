@@ -319,6 +319,11 @@ jobs:
           info=$(ci-base/scripts/sdk-image-info.sh)
           echo "${info}" | tee -a "${GITHUB_ENV}"
 
+      # The init-script format check of the SDK runs shfmt; an image without it
+      # would validate nothing, so the job fails here instead.
+      - name: Check that the SDK image has shfmt
+        run: docker run --rm --entrypoint shfmt "${HARNESS_SDK_CONTAINER}:${HARNESS_SDK_PIN}" --version
+
       - name: Check the feed commit and record the build start
         run: |
           sha=$(git -C packages-feed rev-parse HEAD)

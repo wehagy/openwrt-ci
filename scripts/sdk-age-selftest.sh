@@ -60,7 +60,7 @@ expect_decide() {
 	age:*) label=$(label_at "${4#age:}") ;;
 	*) label=$4 ;;
 	esac
-	out=$(sdk_decide "$3" "${label}" "$5" "$6" "$7")
+	out=$(sdk_decide "$3" "${label}" "$5" "$6" "$7" "${recipe_want}" "${recipe_have}")
 	got=${out%% *}
 	reason=${out#* }
 	[ "${got}" = "$1" ] || die "decision: ${8}: expected $1, got ${got} (${reason})"
@@ -80,6 +80,10 @@ label_at() {
 }
 
 now=1800000000
+# sha256 of the Dockerfile now and as the image label recorded it; the cases
+# below that do not test the recipe leave them equal.
+recipe_want=1111111111111111111111111111111111111111111111111111111111111111
+recipe_have=${recipe_want}
 expect_decide rebuild "image missing" false "" "${now}" 1 "" "missing"
 expect_decide rebuild "image missing" false age:10 "${now}" 1 "${now}" "missing, refresh requested"
 expect_decide reuse "age 10 s <= 1 day(s)" true age:10 "${now}" 1 "" "fresh"
@@ -94,6 +98,16 @@ expect_decide rebuild "creation time unreadable" true "2026-11-01 00:00:00" "${n
 expect_decide rebuild "refresh_sdk requested (age 10 s)" true age:10 "${now}" 1 "$((now - 5))" "fresh, created before the refresh"
 expect_decide reuse "refreshed since the request (age 10 s" true age:10 "${now}" 1 "$((now - 20))" "fresh, created after the refresh"
 expect_decide rebuild "age 86401 s > 1 day(s)" true "age:$((day + 1))" "${now}" 1 "$((now - 2 * day))" "stale, created after the refresh"
+
+# The Dockerfile changed (the image content changed): rebuild whatever the age.
+recipe_have=2222222222222222222222222222222222222222222222222222222222222222
+expect_decide rebuild "Dockerfile changed" true age:10 "${now}" 1 "" "fresh, other Dockerfile"
+expect_decide rebuild "Dockerfile changed" true age:10 "${now}" 1 "$((now - 20))" "refreshed, other Dockerfile"
+recipe_have=
+expect_decide rebuild "Dockerfile changed" true age:10 "${now}" 1 "" "fresh, image without the label"
+recipe_have=${recipe_want}
+expect_decide reuse "age 10 s <= 1 day(s)" true age:10 "${now}" 1 "" "fresh, same Dockerfile"
+expect_decide rebuild "image missing" false "" "${now}" 1 "" "missing, Dockerfile label ignored"
 
 parsed=$(utc_to_epoch 1970-01-02T00:00:00Z)
 [ "${parsed}" -eq "${day}" ] || die "utc_to_epoch: 1970-01-02T00:00:00Z is not ${day}"

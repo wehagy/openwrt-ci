@@ -147,6 +147,12 @@ if [ "${refresh}" = true ]; then
 	refresh_since=$(date +%s)
 fi
 
+# The Dockerfile is the recipe of the image: its sha256 is a label, and an
+# image labelled with another one (or none) is rebuilt.
+recipe_sha=$(sha256sum "${script_dir}/../docker/sdk-image/Dockerfile") || die "cannot hash the Dockerfile"
+recipe_sha=${recipe_sha%% *}
+[ "${#recipe_sha}" -eq 64 ] || die "unexpected sha256 of the Dockerfile"
+
 # Read the image of the tag and decide with sdk_decide. Sets old_digest and
 # old_created (empty when the image is missing), decision and reason.
 decide() {
@@ -155,13 +161,16 @@ decide() {
 	ghcr_inspect "${repo_path}" "${tag}" "${decide_dir}"
 	old_digest=
 	old_created=
+	old_recipe=
 	decide_exists=false
 	if [ -f "${decide_dir}/config.json" ]; then
 		decide_exists=true
 		old_digest=$(ghcr_digest "${decide_dir}")
 		old_created=$(ghcr_label "${decide_dir}" "${label_created}")
+		old_recipe=$(ghcr_label "${decide_dir}" "${label_recipe}")
 	fi
-	decide_out=$(sdk_decide "${decide_exists}" "${old_created}" "${decide_now}" "${max_days}" "${refresh_since}")
+	decide_out=$(sdk_decide "${decide_exists}" "${old_created}" "${decide_now}" "${max_days}" "${refresh_since}" \
+		"${recipe_sha}" "${old_recipe}")
 	decision=${decide_out%% *}
 	reason=${decide_out#* }
 }
@@ -240,6 +249,7 @@ push_image() {
 		--label "${label_created}=${created}" \
 		--label "org.opencontainers.image.source=https://github.com/${ci_repository}" \
 		--label "org.opencontainers.image.base.name=${base_image}" \
+		--label "${label_recipe}=${recipe_sha}" \
 		--label "${label_archive}=${archive_name}" \
 		--label "${label_archive_sha}=${archive_sha}" \
 		--label "${label_run_id}=${run_id}" \

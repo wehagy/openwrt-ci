@@ -11,6 +11,7 @@
 export label_created=org.opencontainers.image.created
 export label_archive=io.github.wehagy.openwrt-ci.sdk-archive
 export label_archive_sha=io.github.wehagy.openwrt-ci.sdk-archive-sha256
+export label_recipe=io.github.wehagy.openwrt-ci.dockerfile-sha256
 export label_run_id=io.github.wehagy.openwrt-ci.run-id
 export label_run_attempt=io.github.wehagy.openwrt-ci.run-attempt
 

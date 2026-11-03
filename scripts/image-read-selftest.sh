@@ -151,6 +151,8 @@ said "pull fallback: the notice says setup.sh runs" err "setup.sh" has
 calls "pull fallback: it pulls the official container" "docker pull --quiet docker.io/openwrt/imagebuilder:x86-64-main" has
 calls "pull fallback: it writes nothing to the registry" "PUT" lacks
 calls "pull fallback: it does not push" "buildx" lacks
+calls "pull fallback: it does not push an image" "docker push" lacks
+calls "pull fallback: it does not log in" "docker login" lacks
 
 script_case "pull: the fallback of a release container needs no setup.sh" 0 ANY run_pull HARNESS_IB_FALLBACK=true \
 	HARNESS_IB_OFFICIAL_IMAGE=docker.io/openwrt/imagebuilder:x86-64-25.12.6 HARNESS_IB_OFFICIAL_SETUP=false

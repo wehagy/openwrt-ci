@@ -9,7 +9,11 @@
 # and no setup-uv and check out without credentials, no workflow knows the old
 # `refresh_sdk` input, and the base's own CI names the repository that owns the
 # refresh (wehagy/openwrt-ci-packages), not itself, in the command a missing
-# image fails with.
+# image fails with. It also pins the fallback of a custom image (no workflow
+# but images.yml has ib_fallback, the build container gets HARNESS_IB_SETUP,
+# the reader never logs in or pushes) and that the self-tests of the images
+# run in the feed job of build.yml, so a push or a pull request meets them
+# before a merge.
 #
 # Usage:
 #   scripts/workflow-permissions-selftest.sh   (needs yq)
@@ -129,6 +133,55 @@ expect "ci.yml: every build and image job names wehagy/openwrt-ci-packages" ci \
 	"build-25-12 build-main image-25-12 image-main"
 expect "ci.yml: no build or image job lacks refresh_repository" ci \
 	'[.jobs | to_entries[] | select(.value.uses != null) | select(.value.uses | test("workflows/(build|images)[.]yml")) | select(.value.with.refresh_repository == null) | .key] | join(" ")' ""
+
+# --- the fallback of a custom image ------------------------------------------
+# Only images.yml knows ib_fallback, and only a caller that builds a custom
+# image turns it on (the base's own CI never does: it would hide an image that
+# is missing from the registry).
+for f in build test ci refresh-images; do
+	expect "${f}.yml: no ib_fallback key" "${f}" '[.. | select(tag == "!!map") | keys | .[] | select(. == "ib_fallback")] | length' 0
+	expect "${f}.yml: no ib_fallback value" "${f}" '[.. | select(tag == "!!str") | select(test("ib_fallback"))] | length' 0
+done
+
+# The container that builds the image must get every variable the script
+# reads. Without HARNESS_IB_SETUP the fallback of a snapshot profile dies with
+# "no ImageBuilder in the image".
+build_run=$(wf images '[.jobs.image.steps[] | select(.name == "Build the image") | .run] | join(" ")')
+for v in HARNESS_PROFILE HARNESS_PACKAGES HARNESS_PACKAGE HARNESS_TARGET_PATH HARNESS_IB_SETUP; do
+	same "images.yml: the build container gets ${v}" "$(count_lines "${build_run}" "(^|[[:space:]])--env ${v}([[:space:]]|\$)")" 1
+done
+expect "images.yml: the build step runs imagebuilder-make.sh" images \
+	'[.jobs.image.steps[] | select(.name == "Build the image") | .run] | join(" ") | test("sh /harness/scripts/imagebuilder-make[.]sh")' true
+
+# The fallback only reads: nothing in the reader or in the job that runs it
+# logs in to a registry, pushes, builds an image or calls the API.
+read_text=$(grep -vE '^[[:space:]]*#' "${script_dir}/pull-imagebuilder.sh" "${workflows}/images.yml") ||
+	die "cannot read pull-imagebuilder.sh and images.yml"
+same "images.yml and pull-imagebuilder.sh never log in, push or build" \
+	"$(count_lines "${read_text}" 'docker (login|push|buildx|build|tag)|--push|gh api|-X (PUT|DELETE|POST)')" 0
+
+# --- the self-tests that run on every push -----------------------------------
+# The feed job of build.yml runs on every push and pull request of a caller
+# and on the base's own CI: the self-tests of what writes or reads the images
+# are steps of it.
+for t in image-refresh image-read workflow-permissions imagebuilder-make; do
+	expect "build.yml: the feed job runs ${t}-selftest.sh" build \
+		"[.jobs.feed.steps[] | select(.run == \"ci-base/scripts/${t}-selftest.sh\")] | length" 1
+done
+# Every self-test of scripts/ is a step of some workflow.
+for st in "${script_dir}"/*-selftest.sh; do
+	st_name=$(basename "${st}")
+	st_steps=0
+	for f in build test images ci refresh-images; do
+		st_n=$(wf "${f}" "[(.jobs[].steps // [])[] | select(.run == \"ci-base/scripts/${st_name}\")] | length")
+		st_steps=$((st_steps + st_n))
+	done
+	if [ "${st_steps}" -ge 1 ]; then
+		record "${st_name} is run by a workflow" 0 ""
+	else
+		record "${st_name} is run by a workflow" 1 "no workflow step runs it"
+	fi
+done
 
 echo
 if [ "${failures}" -ne 0 ]; then

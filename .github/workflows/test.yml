@@ -96,9 +96,7 @@ defaults:
 
 env:
   HARNESS_CI_REPOSITORY: wehagy/openwrt-ci
-  OPENWRT_TESTS_REF: e9a85c56faaa32dd4a4d604623798708a8edcc50
-  # Python for the openwrt-tests environment; harness/openwrt-tests.uv.lock
-  # was generated with this version from the pyproject.toml at the ref above.
+  # Python for the openwrt-tests environment (scripts/prepare-tests-env.sh).
   UV_PYTHON: "3.15"
 
 jobs:
@@ -109,6 +107,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      tests_sha: ${{ steps.tests-ref.outputs.tests_sha }}
+      tests_resolved_at: ${{ steps.tests-ref.outputs.tests_resolved_at }}
     steps:
       # The harness (scripts/, harness/, docker/) is checked out explicitly: a
       # reusable workflow runs in the caller's context, so a plain checkout
@@ -135,6 +135,18 @@ jobs:
       # inputs and a fake mirror (needs jq, yq, curl).
       - name: Image inputs self-test
         run: ci-base/scripts/image-inputs-selftest.sh
+
+      # The lock reader, the resolution of the followed branch and the
+      # environment script, with a local repository and a fake uv.
+      - name: Tests environment self-test
+        run: ci-base/scripts/tests-env-selftest.sh
+
+      # aparcar/openwrt-tests follows its main branch (README, "Pinned test
+      # environment"); the tip is read once here so that every target job of
+      # this run checks out the same commit.
+      - name: Resolve the openwrt-tests commit
+        id: tests-ref
+        run: ci-base/scripts/resolve-tests-ref.sh | tee -a "${GITHUB_OUTPUT}"
 
       - name: Validate inputs
         env:
@@ -225,7 +237,7 @@ jobs:
         with:
           persist-credentials: false
           repository: aparcar/openwrt-tests
-          ref: ${{ env.OPENWRT_TESTS_REF }}
+          ref: ${{ needs.targets.outputs.tests_sha }}
           path: openwrt-tests
 
       # No Actions cache: this job runs with the caller secrets, and an entry
@@ -284,10 +296,16 @@ jobs:
             ci-base/scripts/install-tests.sh openwrt-tests/tests/ext
           fi
           ci-base/scripts/prepare-target.sh | tee -a "${GITHUB_ENV}"
-          # The lock pins every dependency (labgrid is a git branch upstream);
-          # --locked fails the job if it no longer matches the pyproject.toml.
-          cp ci-base/harness/openwrt-tests.uv.lock openwrt-tests/uv.lock
-          uv --project openwrt-tests sync --locked
+
+      # openwrt-tests and labgrid are not pinned: the commit was resolved by
+      # the targets job, labgrid is the newest 26.x as of that moment, the
+      # other dependencies stay at the seed lock. Both versions are exported
+      # for the summary and the junit properties.
+      - name: Install the openwrt-tests environment
+        env:
+          HARNESS_TESTS_SHA: ${{ needs.targets.outputs.tests_sha }}
+          HARNESS_TESTS_RESOLVED_AT: ${{ needs.targets.outputs.tests_resolved_at }}
+        run: ci-base/scripts/prepare-tests-env.sh openwrt-tests | tee -a "${GITHUB_ENV}"
 
       # Retry helpers of the harness (the `apk update` flake handling) with a
       # stub in place of the VM; no secrets, no QEMU.

@@ -4,7 +4,7 @@ Reusable base of an OpenWrt package CI: build a package with the official SDK,
 test it in QEMU and build firmware images with it using the official Image
 Builder. This repository holds only the base (reusable workflows, scripts,
 pinned tooling, the generic package test) and its own CI, which tests the base
-with a sample package (`wsdd2`). The packages themselves, their
+with a sample package (`netbird`). The packages themselves, their
 package-specific tests and the planned upstream pull request automation live in
 [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci-packages),
 which calls the workflows below.
@@ -64,7 +64,7 @@ which calls the workflows below.
   - `test.yml`: reusable QEMU test.
   - `images.yml`: reusable Image Builder build.
   - `ci.yml`: the base's own CI, calls the three workflows above for the sample
-    package `wsdd2` on push to `feat/**`.
+    package `netbird` on push to `feat/**`.
 - `scripts/` also has: `report-revisions.sh` (prints the harness and caller
   commits of a job), `install-tests.sh` (copies the pytest files),
   `with-test-secrets.sh` (exports the caller secrets to the tests only).
@@ -630,12 +630,12 @@ the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci
 
 ## Own CI `ci.yml`
 
-Tests the base with the sample package `wsdd2`. Every call passes
+Tests the base with the sample package `netbird`. Every call passes
 `ci_ref: ${{ github.sha }}`, the commit under test. On push to `feat/**` and on
 `workflow_dispatch`.
 Dispatch inputs: `refresh_sdk` (boolean, passed to `build.yml`) and `lines`
 (`both`, `25.12` or `main`: the other build job is skipped); `package`
-(default `wsdd2`), `feed_repository` and `feed_ref` (passed to `build.yml`,
+(default `netbird`), `feed_repository` and `feed_ref` (passed to `build.yml`,
 see "Feed source"); `stages` (`all`, or `build` to skip the test and image
 jobs); `profiles` and `packages` (the `profiles` and `packages` inputs; empty
 profiles: `x86/64/generic` of `harness/images.yml`; empty packages: the CI uses

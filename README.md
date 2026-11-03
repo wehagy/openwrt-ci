@@ -52,13 +52,13 @@ which calls the workflows below.
     `image-inputs-selftest.sh`, `lib/image-inputs.sh` (validators).
   - Images: `resolve-image.sh`, `pull-imagebuilder.sh`,
     `imagebuilder-make.sh` (runs inside the Image Builder container) with
-    `ib-setup.sh` and `ib-setup-selftest.sh`,
+    `ib-setup.sh` and `ib-setup-selftest.sh`, `ib-pins-selftest.sh`,
     `check-image-outcome.sh`, `collect-images.sh`, `image-summary.sh`.
   - `lib/common.sh`: shared helpers. `lib/selftest.sh` (case bookkeeping of
     the self-tests), `lib/ghcr.sh` (registry reads),
     `lib/sdk-age.sh` (age rule and reuse/rebuild decision),
     `lib/sdk-labels.sh` (image label keys), `lib/ghcr-versions.sh` (delete of
-    a package version).
+    a package version), `lib/ib-pins.sh` (pin of the built package).
 - `docker/sdk-image/Dockerfile`: derives the SDK image from the official one.
 - `.github/workflows/`
   - `build.yml`: reusable SDK build.
@@ -634,9 +634,30 @@ the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci
   `packages/` directory. It is unsigned and needs no signature override: the
   Image Builder (`CONFIG_SIGNATURE_CHECK=y`) indexes `packages/` itself with
   `apk mkndx --allow-untrusted` and signs that index with its local key.
+- The built package is requested as `<package>=<version>`
+  (`scripts/imagebuilder-make.sh`, `lib/ib-pins.sh`), the version read from
+  the metadata of the `.apk` (`apk adbdump`) and checked against its file
+  name. A bare name would install the highest version of the local
+  `packages/` index and the official feeds, so a feed package that is newer
+  would replace the one built here. Packages of the `packages` input stay
+  unpinned (the feed chooses); a `-<package>` that removes the built package
+  is refused. The released Image Builders (25.12) have a `FormatPackages`
+  that appends the version of the last `<name>=<version>` to every package
+  after it (the install then fails with `breaks: world[libgcc1=...]`);
+  `imagebuilder-make.sh` rewrites that one line to the form of `main` and
+  refuses an unknown `FormatPackages`.
 - `scripts/collect-images.sh` requires the line `<package> - <version>` in
-  `*.manifest` (version of the built `.apk`), then keeps the files matching
-  `image_globs` plus the manifest and `sha256sums`.
+  `*.manifest` (version of the built `.apk`, equal to the one in its
+  metadata), then that the installed package is the local one: the checksum
+  of its record in the apk database of the image root (`C:Q1...`, the first
+  20 bytes of the index `sha256`) must be the one of the local `packages.adb`.
+  A feed package of the same version fails here (measured on 25.12.2: apk
+  installs the feed's, also with the local repository listed first, so the
+  package under test needs a higher release than the feed's). Then it keeps the files
+  matching `image_globs` plus the manifest and `sha256sums`.
+  `scripts/ib-pins-selftest.sh` (step "Package pin self-test" of the
+  `profiles` job) covers the package list, the metadata readers, the check and
+  the `FormatPackages` repair.
 - An image that does not fit the flash: the Image Builder does not fail, it
   only prints `WARNING: Image file ... is too big: <size> > <limit>` and
   deletes the image (`Build/check-size`); `tplink-safeloader` refuses earlier

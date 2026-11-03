@@ -99,6 +99,11 @@ jobs:
       - name: Image Builder setup self-test
         run: ci-base/scripts/ib-setup-selftest.sh
 
+      # Fixed text: the pinned package list, the apk metadata, the check that
+      # the image holds the local apk and the FormatPackages repair.
+      - name: Package pin self-test
+        run: ci-base/scripts/ib-pins-selftest.sh
+
       # Validators and resolution of the image inputs, with fixed inputs and
       # a fake mirror (no network).
       - name: Image inputs self-test

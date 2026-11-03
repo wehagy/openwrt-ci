@@ -170,6 +170,23 @@ jobs:
       - name: Image inputs self-test
         run: ci-base/scripts/image-inputs-selftest.sh
 
+      # The only code that writes the images (a stub registry, docker, gh and
+      # curl): so a change to it is met by a push or a pull request, not only
+      # by the next daily refresh.
+      - name: Image refresh self-test
+        run: ci-base/scripts/image-refresh-selftest.sh
+
+      # Which jobs may write packages (only the refresh), that the fallback of
+      # a custom image is off outside custom-image and that these self-tests
+      # run here.
+      - name: Workflow permissions self-test
+        run: ci-base/scripts/workflow-permissions-selftest.sh
+
+      # The Image Builder step of the image jobs (setup.sh in the job for the
+      # fallback of a snapshot profile), with a fake make and ib-setup.sh.
+      - name: Image Builder make self-test
+        run: ci-base/scripts/imagebuilder-make-selftest.sh
+
       # The architecture matrix of sdk. A profile that does not exist fails
       # here, before any architecture job.
       - name: Resolve the architectures

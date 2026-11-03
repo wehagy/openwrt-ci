@@ -1,0 +1,17 @@
+{
+	"netbird": {
+		"instances": {
+			"instance1": {
+				"running": false,
+				"incarnation": 3,
+				"command": [
+					"/usr/bin/netbird",
+					"service",
+					"run"
+				],
+				"term_timeout": 5,
+				"exit_code": 0
+			}
+		}
+	}
+}

@@ -2,9 +2,12 @@
 
 Checks that the .apk installs, that apk reports it installed, and that the
 services it ships are running. Every /etc/init.d/ script the package installs
-must be a procd script and must keep all its instances running with the same
-pids for a stable window; a package that installs no init script is the only
-case where the service test is skipped. Records the package version, the line
+must be a procd script. After a start, at least one instance must be running
+and every running instance must keep its pid for a stable window; an instance
+that is not running passes only if it exited with exit_code 0 (a one-shot);
+anything else fails (harness_util.judge_instances). The service check is
+skipped only for a package that installs no init script and for the scripts the
+caller declares disabled by default (HARNESS_SERVICES_DISABLED). Records the package version, the line
 and the image used as junit properties.
 
 Environment variables:
@@ -16,15 +19,24 @@ Environment variables:
                            or r37969-5799d2da76
   HARNESS_IMAGE_URL        URL of the image
   HARNESS_IMAGE_SHA256     sha256 of the downloaded image file
+  HARNESS_SERVICES_DISABLED  optional; init scripts that are disabled by default
+                           in the package (separated by spaces or commas)
 """
 
-import json
 import re
 import shlex
 import time
 
 import pytest
-from harness_util import LOG, apk_timeout_kwargs, env, poll
+from harness_util import (
+    LOG,
+    apk_timeout_kwargs,
+    disabled_services,
+    env,
+    poll,
+    service_sampler,
+    split_disabled,
+)
 
 # Emulated targets are slow; labgrid's run_check default is 30 s.
 CMD_TIMEOUT = 600
@@ -93,43 +105,6 @@ def _is_procd(vm_ssh, name):
     return rc == 0
 
 
-def _service_sampler(vm_ssh, name):
-    """Return sample() -> (ok, detail) for the poll of one service.
-
-    A sample is ok when the service has instances, all of them are running
-    with a pid, and the (instance, pid) set equals the previous sample's. A
-    restart loop therefore never gets ok for a whole stable window.
-    """
-    state = {"last": None, "changes": 0}
-
-    def sample():
-        query = json.dumps({"name": name})
-        out, _, rc = vm_ssh.run(
-            f"ubus call service list {shlex.quote(query)}", timeout=QUERY_TIMEOUT
-        )
-        detail = "\n".join(out)
-        if rc != 0:
-            return False, f"ubus rc={rc}: {detail}"
-        try:
-            services = json.loads(detail)
-        except json.JSONDecodeError:
-            return False, f"unparsable ubus output: {detail}"
-        instances = services.get(name, {}).get("instances", {})
-        pids = tuple(sorted((k, i.get("pid")) for k, i in instances.items()))
-        unchanged = pids == state["last"]
-        if state["last"] is not None and not unchanged:
-            state["changes"] += 1
-        state["last"] = pids
-        all_running = bool(instances) and all(
-            i.get("running") and i.get("pid") for i in instances.values()
-        )
-        return all_running and unchanged, (
-            f"pid changes seen: {state['changes']}; last ubus output: {detail}"
-        )
-
-    return sample
-
-
 def test_install_package(install):
     detail = "\n".join(install["out"] + install["err"])
     assert install["rc"] == 0, f"apk add failed with {install['rc']}:\n{detail}"
@@ -165,6 +140,16 @@ def test_services_running(install, vm_ssh, package, record_property):
     if not names:
         pytest.skip(f"{package} installs no /etc/init.d script, nothing to check")
 
+    names, disabled = split_disabled(package, names, disabled_services())
+    for name in disabled:
+        LOG.warning("harness: service %s skipped, declared disabled by default", name)
+        record_property(f"service_{name}", "skipped: disabled by default")
+    if not names:
+        pytest.skip(
+            f"every init script of {package} is declared disabled by default"
+            f" ({', '.join(disabled)}), nothing to check"
+        )
+
     failures = [
         f"/etc/init.d/{name} is not a procd script (no USE_PROCD=1)"
         for name in names
@@ -182,13 +167,13 @@ def test_services_running(install, vm_ssh, package, record_property):
             failures.append(f"service {name} start failed with rc={start_rc}")
             continue
         ok, detail = poll(
-            _service_sampler(vm_ssh, name),
+            service_sampler(vm_ssh, name, QUERY_TIMEOUT),
             SERVICE_TIMEOUT,
             stable_s=SERVICE_STABLE,
         )
         if not ok:
             failures.append(
-                f"service {name}: instances not all running with constant pids"
-                f" for {SERVICE_STABLE} s (waited {SERVICE_TIMEOUT} s): {detail}"
+                f"service {name}: not healthy and stable for {SERVICE_STABLE} s"
+                f" (waited {SERVICE_TIMEOUT} s): {detail}"
             )
     assert not failures, "\n".join(failures)

@@ -85,10 +85,11 @@ B" "newline"
 #   $2  HARNESS_TESTS_PATH
 #   $3  HARNESS_TEST_SECRETS
 #   $4  case name
+#   $5  HARNESS_SERVICES_DISABLED (optional)
 validate_case() {
 	rc=0
 	out=$(HARNESS_PACKAGE=netbird HARNESS_LINE=25.12 HARNESS_SOURCE=artifact \
-		HARNESS_TESTS_PATH=$2 HARNESS_TEST_SECRETS=$3 \
+		HARNESS_TESTS_PATH=$2 HARNESS_TEST_SECRETS=$3 HARNESS_SERVICES_DISABLED="${5:-}" \
 		sh "${script_dir}/validate-inputs.sh" 2>&1) || rc=$?
 	if [ "${rc}" -eq "$1" ]; then
 		record "validate-inputs $4" 0 ""
@@ -104,6 +105,10 @@ validate_case 1 .git/hooks '' "tests_path in .git"
 validate_case 1 '' PATH "secret PATH"
 validate_case 1 '' 'A;id' "secret with ;"
 validate_case 1 packages/netbird/tests 'NB_SETUP_KEY,GITHUB_TOKEN' "reserved secret in a list"
+validate_case 0 '' '' "services_disabled with two names" 'socat, ssh-agent'
+validate_case 0 '' '' "services_disabled blank" ' ,'
+validate_case 1 '' '' "services_disabled with a path" '../etc/passwd'
+validate_case 1 '' '' "services_disabled with a command" 'socat;id'
 
 # --- install-tests.sh -----------------------------------------------------
 

@@ -1,7 +1,10 @@
 """Small helpers shared by the harness tests (no pytest collection)."""
 
+import json
 import logging
 import os
+import re
+import shlex
 import time
 
 import pytest
@@ -39,6 +42,114 @@ def apk_timeout_kwargs():
             pytrace=False,
         )
     return {"timeout": int(value)}
+
+
+# Name of an /etc/init.d script, as the caller may declare it disabled.
+SERVICE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def disabled_services():
+    """Init script names the caller declared disabled by default.
+
+    HARNESS_SERVICES_DISABLED (the `services_disabled` input of test.yml) is a
+    list separated by spaces or commas. The service check skips those scripts.
+    """
+    names = os.environ.get("HARNESS_SERVICES_DISABLED", "").replace(",", " ").split()
+    for name in names:
+        if not SERVICE_NAME.match(name):
+            pytest.fail(
+                f"HARNESS_SERVICES_DISABLED has an invalid service name: {name!r}",
+                pytrace=False,
+            )
+    return sorted(set(names))
+
+
+def split_disabled(package, names, disabled):
+    """Split the init scripts into (to check, skipped as disabled by default).
+
+    A declared name that the package does not install fails: it is a typo or
+    a script that was renamed, and the check would silently cover less.
+    """
+    unknown = [name for name in disabled if name not in names]
+    assert not unknown, (
+        f"services_disabled names {unknown}, but {package} installs only"
+        f" {names} under /etc/init.d"
+    )
+    return [n for n in names if n not in disabled], [n for n in names if n in disabled]
+
+
+def judge_instances(instances):
+    """Judge one `ubus call service list` sample of a procd service.
+
+    Returns (ok, problems). The rule: the service has at least one instance
+    that is running (with a pid); an instance that is not running passes only
+    if it exited with exit_code 0 (a one-shot such as chrony-hotplug). Any
+    other state fails: no instance, a daemon that exited 0 on its own, a
+    non-zero or missing exit_code, a running instance without a pid.
+    Stability over time is the sampler's business (service_sampler).
+    """
+    if not instances:
+        return False, ["no instance"]
+    problems = []
+    running = 0
+    for key, inst in sorted(instances.items()):
+        if inst.get("running"):
+            if inst.get("pid"):
+                running += 1
+            else:
+                problems.append(f"{key} is running without a pid")
+            continue
+        code = inst.get("exit_code")
+        if type(code) is not int or code != 0:
+            shown = "no exit_code" if code is None else f"exit_code {code!r}"
+            problems.append(f"{key} is not running ({shown})")
+    if not running:
+        problems.append("no instance is running")
+    return not problems, problems
+
+
+def service_sampler(vm_ssh, name, query_timeout=30):
+    """Return sample() -> (ok, detail) for the poll of one service.
+
+    A sample is ok when judge_instances accepts it and the state of every
+    instance (pid of a running one, exit code of an exited one) equals the
+    previous sample's. A restart loop therefore never gets ok for a whole
+    stable window.
+    """
+    state = {"last": None, "changes": 0}
+
+    def sample():
+        query = json.dumps({"name": name})
+        out, _, rc = vm_ssh.run(
+            f"ubus call service list {shlex.quote(query)}", timeout=query_timeout
+        )
+        detail = "\n".join(out)
+        if rc != 0:
+            return False, f"ubus rc={rc}: {detail}"
+        try:
+            services = json.loads(detail)
+        except json.JSONDecodeError:
+            return False, f"unparsable ubus output: {detail}"
+        if not isinstance(services, dict):
+            return False, f"unexpected ubus output: {detail}"
+        instances = services.get(name, {}).get("instances", {})
+        seen = tuple(
+            sorted(
+                (k, i.get("pid") if i.get("running") else None, i.get("exit_code"))
+                for k, i in instances.items()
+            )
+        )
+        unchanged = seen == state["last"]
+        if state["last"] is not None and not unchanged:
+            state["changes"] += 1
+        state["last"] = seen
+        ok, problems = judge_instances(instances)
+        why = "; ".join(problems) if problems else "all instances fine"
+        return ok and unchanged, (
+            f"{why}; pid changes seen: {state['changes']}; last ubus output: {detail}"
+        )
+
+    return sample
 
 
 def poll(check, timeout_s, interval_s=POLL_INTERVAL, stable_s=0.0):

@@ -203,6 +203,27 @@ done
 validator_case check_apk_timeout reject "120
 ::error::x" "workflow command"
 
+# --- check_service_names and the summary line --------------------------------
+
+sv64=${n33}${n33%aa}
+sv65=${sv64}a
+for t in socat 'socat ssh-agent' 'a,b' 'a, b' 'a.b_c-d' 'a
+b' 'S1' 0a "${sv64}"; do
+	validator_case check_service_names accept "${t}" "'${t}'"
+done
+for t in '' ' ' -x _x .x 'a/b' '../x' 'a;b' 'a b;' 'é' "x\$(id)" 'a|b' "${sv65}"; do
+	validator_case check_service_names reject "${t}" "'${t}'"
+done
+validator_case check_service_names reject "socat
+::error::x" "workflow command"
+sv17=
+i=0
+while [ "${i}" -lt 17 ]; do
+	sv17="${sv17} s${i}"
+	i=$((i + 1))
+done
+validator_case check_service_names reject "${sv17}" "17 names"
+
 printf '<testsuite><testcase classname="t" name="test_a" time="1.0"/></testsuite>' >"${work}/results.xml"
 summary_env() {
 	env HARNESS_LINE=25.12 HARNESS_TARGET=x86-64 HARNESS_RELEASE=25.12.6 HARNESS_KVM=true \
@@ -221,6 +242,19 @@ if grep -qxF -- '- apk command timeout: 120 s (apk_timeout input of the caller)'
 	record "summary says 120 s from the caller" 0 ""
 else
 	record "summary says 120 s from the caller" 1 "${sc_out}"
+fi
+
+script_case "summary without services_disabled" 0 ANY summary_env
+if grep -q 'services disabled' "${work}/out"; then
+	record "summary has no services line when none is disabled" 1 "${sc_out}"
+else
+	record "summary has no services line when none is disabled" 0 ""
+fi
+script_case "summary with services_disabled" 0 ANY summary_env HARNESS_SERVICES_DISABLED=socat
+if grep -qxF -- '- services disabled by default, not checked: socat (services_disabled input of the caller)' "${work}/out"; then
+	record "summary names the services not checked" 0 ""
+else
+	record "summary names the services not checked" 1 "${sc_out}"
 fi
 
 # --- check_arch_token ------------------------------------------------------

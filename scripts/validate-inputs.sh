@@ -20,6 +20,9 @@
 #   HARNESS_MEMORY_INPUT optional; VM memory (see check_vm_memory)
 #   HARNESS_APK_TIMEOUT  optional; per-command timeout of the apk commands of
 #                        the generic test (see check_apk_timeout)
+#   HARNESS_SERVICES_DISABLED optional; init scripts the package leaves disabled
+#                        by default, skipped by the service test (see
+#                        check_service_names)
 
 set -eu
 
@@ -56,4 +59,8 @@ if [ -n "${HARNESS_MEMORY_INPUT:-}" ]; then
 fi
 if [ -n "${HARNESS_APK_TIMEOUT:-}" ]; then
 	check_apk_timeout "${HARNESS_APK_TIMEOUT}"
+fi
+services_blank=$(printf '%s' "${HARNESS_SERVICES_DISABLED:-}" | tr -d ' \n\t\r,') || die "cannot read the disabled services"
+if [ -n "${services_blank}" ]; then
+	check_service_names "${HARNESS_SERVICES_DISABLED}"
 fi

@@ -1,0 +1,17 @@
+{
+	"netbird": {
+		"instances": {
+			"instance1": {
+				"running": true,
+				"pid": 2310,
+				"incarnation": 3,
+				"command": [
+					"/usr/bin/netbird",
+					"service",
+					"run"
+				],
+				"term_timeout": 5
+			}
+		}
+	}
+}

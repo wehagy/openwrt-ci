@@ -10,7 +10,8 @@
 #   HARNESS_LINE, HARNESS_TARGET, HARNESS_RELEASE, HARNESS_KVM, HARNESS_MEMORY,
 #   HARNESS_IMAGE_URL, HARNESS_IMAGE_SHA256, HARNESS_IMAGE_DATE, HARNESS_PACKAGE,
 #   HARNESS_PACKAGE_VERSION; HARNESS_APK_TIMEOUT (optional; the apk_timeout
-#   input of test.yml, empty: labgrid's default, no per-command timeout)
+#   input of test.yml, empty: labgrid's default, no per-command timeout);
+#   HARNESS_SERVICES_DISABLED (optional; the services_disabled input of test.yml)
 
 set -eu
 
@@ -50,6 +51,9 @@ if [ -n "${HARNESS_APK_TIMEOUT:-}" ]; then
 	printf -- '- apk command timeout: %s s (apk_timeout input of the caller)\n' "${HARNESS_APK_TIMEOUT}"
 else
 	printf -- '- apk command timeout: none (labgrid default; apk_timeout not set by the caller)\n'
+fi
+if [ -n "${HARNESS_SERVICES_DISABLED:-}" ]; then
+	printf -- '- services disabled by default, not checked: %s (services_disabled input of the caller)\n' "${HARNESS_SERVICES_DISABLED}"
 fi
 printf -- '- pytest exit: %s, total: %s s\n' "${pytest_rc}" "${total}"
 

@@ -319,6 +319,34 @@ check_apk_timeout() {
 		die "invalid apk timeout (allowed: whole seconds from 30 to 600)"
 }
 
+# Abort unless the argument is a list of init script names separated by spaces,
+# commas or newlines: 1 to 16 names of [A-Za-z0-9][A-Za-z0-9._-]*, at most 64
+# characters each (the services the package leaves disabled by default; the
+# generic service test skips them). The value is never echoed (see
+# check_package_name).
+#
+# Arguments:
+#   $1  list
+check_service_names() {
+	csn_list=$(printf '%s' "$1" | tr '\n\t\r,' '    ') || die "cannot read the service names"
+	case "${csn_list}" in
+	*[!A-Za-z0-9._\ -]*) die "invalid service names (allowed: init script names of [A-Za-z0-9._-] separated by spaces or commas)" ;;
+	*) ;;
+	esac
+	csn_count=0
+	# Unquoted on purpose: split on blanks.
+	# shellcheck disable=SC2086
+	for csn_name in ${csn_list}; do
+		case "${csn_name}" in
+		[!A-Za-z0-9]* | *[!A-Za-z0-9._-]*) die "invalid service name (must start with a letter or digit)" ;;
+		*) ;;
+		esac
+		[ "${#csn_name}" -le 64 ] || die "invalid service name (longer than 64 characters)"
+		csn_count=$((csn_count + 1))
+	done
+	{ [ "${csn_count}" -ge 1 ] && [ "${csn_count}" -le 16 ]; } || die "invalid service names (1 to 16 names)"
+}
+
 # Abort unless the argument is a list of QEMU test target ids separated by
 # spaces or newlines: 1 to 16 ids of [a-z0-9][a-z0-9-]*, at most 32 characters
 # each. Whether an id exists is checked against harness/targets.yml by

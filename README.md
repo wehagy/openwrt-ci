@@ -438,8 +438,8 @@ a test repository, an upstream pull request) passes:
 
 Inputs (`line`, `package`, `source` required; all validated by
 `scripts/validate-inputs.sh` before use; an invalid value fails the run).
-Optional: `tests_path`, `test_secrets`, `targets`, `memory`, `apk_timeout` and
-`ci_ref` (see above and "Test targets and VM memory").
+Optional: `tests_path`, `test_secrets`, `targets`, `memory`, `apk_timeout`,
+`services_disabled` and `ci_ref` (see above and "Test targets and VM memory").
 
 | Input     | Meaning                                    | Accepted                              |
 |-----------|--------------------------------------------|---------------------------------------|
@@ -502,10 +502,23 @@ Optional: `tests_path`, `test_secrets`, `targets`, `memory`, `apk_timeout` and
 - `harness/selftests/` (step "Harness helpers self-test" of `test.yml`) tests
   the retry helpers with a stub in place of the VM.
 - Tests: install, `apk` reports the expected version, and every `/etc/init.d`
-  script the package installs is a procd script whose instances all stay
-  running with constant pids for 10 s. The service test is skipped only when
-  the package installs no init script. The job summary lists passed, failed
-  and skipped per test.
+  script the package installs is a procd script. The service rule
+  (`harness_util.judge_instances` and `service_sampler`, tested offline in
+  `harness/selftests/test_services.py` against `ubus call service list` JSON
+  in `harness/selftests/fixtures/ubus-service-list/`): after `stop` and
+  `start` of the script, at least one instance is running, every running
+  instance keeps its pid for 10 s (`SERVICE_STABLE`), and an instance that is
+  not running passes only if it exited with `exit_code` 0 (a one-shot such as
+  `chrony-hotplug`). A daemon that exited 0 alone, a non-zero or missing
+  `exit_code`, a changing pid or no instance at all fails after 60 s. The
+  service test is skipped when the package installs no init script, and for a
+  script the caller lists in `services_disabled` (names under `/etc/init.d`
+  separated by spaces or commas, validated by `check_service_names`): the skip
+  is logged (`harness: service <name> skipped, declared disabled by default`),
+  recorded as the junit property `service_<name>` and named in the job
+  summary; when all scripts are disabled the test is reported as skipped with
+  that reason. A listed name the package does not install fails the test.
+  The job summary lists passed, failed and skipped per test.
 
 ## Reusable workflow `images.yml`
 
@@ -717,6 +730,7 @@ repository can change it with an input of the reusable workflows.
 | `apk add --allow-untrusted --force-non-repository` for the package under test | `harness/tests/test_package.py:57-59` | the CI-built `.apk` is unsigned; the initramfs targets have no persistent overlay, so `apk` refuses a local file otherwise | no |
 | Timeouts above the 30 s default of `run_check`/`wait_for`: `CMD_TIMEOUT` 600 s, `NETWORK_TIMEOUT` 120 s, `SERVICE_TIMEOUT` 60 s (`QUERY_TIMEOUT` 30 s is the labgrid default) | `harness/tests/conftest.py:41-44`, `harness/tests/test_package.py:30-37` | emulated targets without KVM are slow (install, `apk update`, service start) | no |
 | Timeout of the `apk` commands of the test: none by default (labgrid `SSHDriver.run` has `timeout=None`); a caller can set 30 to 600 s | `harness/tests/harness_util.py` (`apk_timeout_kwargs`), `apk_timeout` input of `.github/workflows/test.yml` | `apk info -L` right after the install took 0.5 to 15 s and once more than 30 s (run 41437522326, job 125258840649, `x86-64` on `main`, netbird at 128M); the measured duration is recorded as `apk_info_L_seconds` | yes (`apk_timeout`) |
+| Service test: a procd instance that is not running passes if it exited with `exit_code` 0, but at least one instance must run and be stable; scripts a caller lists in `services_disabled` are skipped | `harness/tests/harness_util.py` (`judge_instances`, `service_sampler`, `split_disabled`), `services_disabled` input of `.github/workflows/test.yml` | chrony declares a second, one-shot instance (`chrony-hotplug`, `exit_code` 0, run 41552951052, job 125652090597) that an all-instances-running rule failed; a package whose service is disabled by default has no instance after `start` | yes (`services_disabled`) |
 | VM memory 128M for every target, as upstream; overridable | `harness/targets.yml:7-12` and `memory` input of `.github/workflows/test.yml` (applied by `scripts/prepare-target.sh:33`) | not a deviation by default; netbird needs 256M (OOM-killed at 128M on `x86-64`, run 41480369349) | yes (`memory`) |
 | `apk update` repeated up to 5 times, 5 s apart, only when stderr has `Failed to send request: Operation not permitted` | `harness/tests/harness_util.py:11-15`, `harness/tests/conftest.py:109` (F3) | one of the parallel fetches of the first `apk update` was lost on `malta-le` and `malta-be` (runs 41427983225, 41360955048); any other failure fails at once | no |
 | `openwrt-tests` pinned to a commit, Python 3.15 and a lock of our own (`harness/openwrt-tests.uv.lock`, `uv sync --locked`); labgrid from the `aparcar/labgrid` fork, branch `staging`, at `475a767` | `.github/workflows/test.yml:88,91,271-281`, `harness/openwrt-tests.uv.lock:443-445` | reproducible runs: the environment never changes between two runs of the same commit. A next slice makes `openwrt-tests` follow `main` and labgrid `>=26,<27` from PyPI | no |

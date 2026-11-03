@@ -1,0 +1,9 @@
+# Responsibility: uv settings for the environment of the aparcar/openwrt-tests
+# checkout (scripts/prepare-tests-env.sh passes this file as UV_CONFIG_FILE,
+# together with UV_NO_SOURCES=1).
+#
+# labgrid comes from PyPI, "always the latest without the major": the
+# constraint holds the major, so a new major is a decision of ours, not a
+# surprise. UV_NO_SOURCES=1 makes uv ignore the [tool.uv.sources] entry of the
+# openwrt-tests pyproject.toml, which points labgrid at a fork branch.
+constraint-dependencies = ["labgrid>=26,<27"]

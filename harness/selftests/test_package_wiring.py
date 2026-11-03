@@ -188,3 +188,52 @@ def test_a_package_without_init_scripts_is_skipped(clock, props, monkeypatch):
     reason = run_test(vm, props, monkeypatch, disabled="sokat")
     assert reason == "chrony installs no /etc/init.d script, nothing to check"
     assert vm.samples == 0
+
+
+# --- junit properties of the installed package ---------------------------------
+
+
+class ListVm:
+    """A VM whose apk reports one installed package."""
+
+    def run(self, cmd, timeout=None, **_):
+        if cmd.startswith("apk info -e"):
+            return [], [], 0
+        return [f"{PACKAGE}-4.9-r1 x86_64 {{{PACKAGE}}} (GPL-2.0) [installed]"], [], 0
+
+
+INSTALLED_ENV = {
+    "HARNESS_PACKAGE_VERSION": "4.9-r1",
+    "HARNESS_LINE": "25.12",
+    "HARNESS_RELEASE": "25.12.6",
+    "HARNESS_IMAGE_URL": "https://example.invalid/image",
+    "HARNESS_IMAGE_SHA256": "0" * 64,
+}
+TESTS_ENV = {
+    "HARNESS_OPENWRT_TESTS_SHA": "b2ed9fe7057af3b52bb94a89ead366b9c526fe8e",
+    "HARNESS_LABGRID_VERSION": "26.0.1",
+}
+
+
+def installed(props):
+    tp.test_package_is_installed(
+        None, ListVm(), PACKAGE, lambda k, v: props.__setitem__(k, v)
+    )
+
+
+def test_the_resolved_tests_environment_is_recorded(props, monkeypatch):
+    for name, value in {**INSTALLED_ENV, **TESTS_ENV}.items():
+        monkeypatch.setenv(name, value)
+    installed(props)
+    assert props["openwrt_tests_sha"] == TESTS_ENV["HARNESS_OPENWRT_TESTS_SHA"]
+    assert props["labgrid_version"] == "26.0.1"
+    assert props["package_version"] == "4.9-r1"
+
+
+@pytest.mark.parametrize("missing", sorted(TESTS_ENV))
+def test_a_job_without_a_resolved_version_fails(props, monkeypatch, missing):
+    for name, value in {**INSTALLED_ENV, **TESTS_ENV}.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv(missing)
+    with pytest.raises(pytest.fail.Exception, match=missing):
+        installed(props)

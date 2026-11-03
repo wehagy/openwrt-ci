@@ -11,7 +11,8 @@
 # Environment variables (all set by scripts/resolve.sh and the fetch scripts):
 #   HARNESS_LINE, HARNESS_TARGET, HARNESS_RELEASE, HARNESS_KVM, HARNESS_MEMORY,
 #   HARNESS_IMAGE_URL, HARNESS_IMAGE_SHA256, HARNESS_IMAGE_DATE, HARNESS_PACKAGE,
-#   HARNESS_PACKAGE_VERSION; HARNESS_APK_TIMEOUT (optional; the apk_timeout
+#   HARNESS_PACKAGE_VERSION, HARNESS_OPENWRT_TESTS_SHA, HARNESS_LABGRID_VERSION
+#   (scripts/prepare-tests-env.sh); HARNESS_APK_TIMEOUT (optional; the apk_timeout
 #   input of test.yml, empty: labgrid's default, no per-command timeout);
 #   HARNESS_SERVICES_DISABLED (optional; the services_disabled input of test.yml)
 
@@ -32,6 +33,8 @@ image_sha256=${HARNESS_IMAGE_SHA256:?HARNESS_IMAGE_SHA256 is required}
 image_date=${HARNESS_IMAGE_DATE:?HARNESS_IMAGE_DATE is required}
 package=${HARNESS_PACKAGE:?HARNESS_PACKAGE is required}
 package_version=${HARNESS_PACKAGE_VERSION:?HARNESS_PACKAGE_VERSION is required}
+tests_sha=${HARNESS_OPENWRT_TESTS_SHA:?HARNESS_OPENWRT_TESTS_SHA is required}
+labgrid_version=${HARNESS_LABGRID_VERSION:?HARNESS_LABGRID_VERSION is required}
 
 [ "$#" -eq 3 ] || die "usage: summary.sh <results.xml> <pytest-exit> <total-seconds>"
 results=$1
@@ -49,6 +52,8 @@ printf -- '- image: %s\n' "${image_url}"
 printf -- '- image sha256: %s\n' "${image_sha256}"
 printf -- '- image date (Last-Modified): %s\n' "${image_date}"
 printf -- '- package: %s %s\n' "${package}" "${package_version}"
+printf -- '- openwrt-tests: %s (main, resolved once per run)\n' "${tests_sha}"
+printf -- '- labgrid: %s (PyPI)\n' "${labgrid_version}"
 if [ -n "${HARNESS_APK_TIMEOUT:-}" ]; then
 	printf -- '- apk command timeout: %s s (apk_timeout input of the caller)\n' "${HARNESS_APK_TIMEOUT}"
 else

@@ -228,7 +228,9 @@ printf '<testsuite><testcase classname="t" name="test_a" time="1.0"/></testsuite
 summary_env() {
 	env HARNESS_LINE=25.12 HARNESS_TARGET=x86-64 HARNESS_RELEASE=25.12.6 HARNESS_KVM=true \
 		HARNESS_MEMORY=128M HARNESS_IMAGE_URL=u HARNESS_IMAGE_SHA256=s HARNESS_IMAGE_DATE=d \
-		HARNESS_PACKAGE=chrony HARNESS_PACKAGE_VERSION=4.9-r1 "$@" \
+		HARNESS_PACKAGE=chrony HARNESS_PACKAGE_VERSION=4.9-r1 \
+		HARNESS_OPENWRT_TESTS_SHA=0123456789abcdef0123456789abcdef01234567 \
+		HARNESS_LABGRID_VERSION=26.0.1 "$@" \
 		"${script_dir}/summary.sh" "${work}/results.xml" 0 5
 }
 script_case "summary without apk_timeout" 0 ANY summary_env
@@ -237,6 +239,14 @@ if grep -qxF -- '- apk command timeout: none (labgrid default; apk_timeout not s
 else
 	record "summary says labgrid default when apk_timeout is not set" 1 "${sc_out}"
 fi
+if grep -qxF -- '- openwrt-tests: 0123456789abcdef0123456789abcdef01234567 (main, resolved once per run)' "${work}/out" &&
+	grep -qxF -- '- labgrid: 26.0.1 (PyPI)' "${work}/out"; then
+	record "summary shows the resolved openwrt-tests commit and labgrid version" 0 ""
+else
+	record "summary shows the resolved openwrt-tests commit and labgrid version" 1 "${sc_out}"
+fi
+script_case "summary without the openwrt-tests commit fails" 1 "" \
+	summary_env HARNESS_OPENWRT_TESTS_SHA=
 script_case "summary with apk_timeout" 0 ANY summary_env HARNESS_APK_TIMEOUT=120
 if grep -qxF -- '- apk command timeout: 120 s (apk_timeout input of the caller)' "${work}/out"; then
 	record "summary says 120 s from the caller" 0 ""

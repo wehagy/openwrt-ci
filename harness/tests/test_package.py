@@ -21,6 +21,8 @@ Environment variables:
                            or r37969-5799d2da76
   HARNESS_IMAGE_URL        URL of the image
   HARNESS_IMAGE_SHA256     sha256 of the downloaded image file
+  HARNESS_OPENWRT_TESTS_SHA  commit of aparcar/openwrt-tests the job runs
+  HARNESS_LABGRID_VERSION  labgrid version installed from PyPI
   HARNESS_SERVICES_DISABLED  optional; init scripts that are disabled by default
                            in the package (separated by spaces or commas)
 """
@@ -134,6 +136,8 @@ def test_package_is_installed(install, vm_ssh, package, record_property):
     record_property("openwrt_release", env("HARNESS_RELEASE"))
     record_property("image_url", env("HARNESS_IMAGE_URL"))
     record_property("image_sha256", env("HARNESS_IMAGE_SHA256"))
+    record_property("openwrt_tests_sha", env("HARNESS_OPENWRT_TESTS_SHA"))
+    record_property("labgrid_version", env("HARNESS_LABGRID_VERSION"))
 
 
 def test_services_running(install, vm_ssh, package, record_property):

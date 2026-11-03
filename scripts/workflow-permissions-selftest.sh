@@ -61,7 +61,8 @@ for f in build test images ci refresh-images; do
 		"${all_perms} | map(select(. != null) | select(tag != \"!!map\")) | length" 0
 	expect "${f}.yml: no GITHUB_REPOSITORY set by hand" "${f}" \
 		'[.. | select(tag == "!!map") | select(has("GITHUB_REPOSITORY"))] | length' 0
-	expect "${f}.yml: no refresh_sdk" "${f}" '[.. | select(tag == "!!str") | select(test("refresh_sdk"))] | length' 0
+	expect "${f}.yml: no refresh_sdk input" "${f}" '[.. | select(tag == "!!map") | keys | .[] | select(. == "refresh_sdk")] | length' 0
+	expect "${f}.yml: no refresh_sdk value" "${f}" '[.. | select(tag == "!!str") | select(test("refresh_sdk"))] | length' 0
 done
 
 # --- who may write packages --------------------------------------------------

@@ -237,6 +237,11 @@ jobs:
       - name: Age rule self-test
         run: ci-base/scripts/sdk-age-selftest.sh
 
+      # A stub gh: a 404 on the delete of the superseded version is success,
+      # every other error fails.
+      - name: Version prune self-test
+        run: ci-base/scripts/ghcr-versions-selftest.sh
+
       # Validates the inputs; the output is written to $GITHUB_ENV only when
       # the script succeeded.
       - name: Resolve line and arch

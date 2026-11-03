@@ -38,6 +38,9 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=lib/ghcr.sh
 . "${script_dir}/lib/ghcr.sh"
 # shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/ghcr-versions.sh
+. "${script_dir}/lib/ghcr-versions.sh"
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/sdk-labels.sh
 . "${script_dir}/lib/sdk-labels.sh"
 
@@ -104,7 +107,8 @@ list_versions() {
 }
 
 # Delete the package version whose name is a manifest digest; a version that is
-# already gone is not an error. Appends to ${deleted} what it deleted.
+# already gone (not listed, or HTTP 404 on the delete) is not an error.
+# Appends to ${deleted} what it deleted.
 #
 # Arguments:
 #   $1  digest
@@ -117,10 +121,18 @@ delete_version() {
 	'') printf 'sdk-image: version %s is already gone\n' "$1" ;;
 	*[!0-9]*) die "expected one version id for $1" ;;
 	*)
-		gh api -X DELETE "${packages_api}/versions/${dv_id}" ||
-			die "cannot delete the version ${dv_id}"
-		deleted="${deleted:+${deleted} }${dv_id} ($1)"
-		printf 'sdk-image: deleted version %s (%s)\n' "${dv_id}" "$1"
+		# A 404 on the delete is a concurrent run that superseded the same
+		# version first (run 41586883056): the version is gone, which is
+		# the goal. Every other error still aborts.
+		dv_result=$(ghcr_delete_version "${packages_api}" "${dv_id}")
+		case "${dv_result}" in
+		deleted)
+			deleted="${deleted:+${deleted} }${dv_id} ($1)"
+			printf 'sdk-image: deleted version %s (%s)\n' "${dv_id}" "$1"
+			;;
+		already-gone) printf 'sdk-image: version %s (%s) is already gone\n' "${dv_id}" "$1" ;;
+		*) die "unexpected result of the delete of ${dv_id}" ;;
+		esac
 		;;
 	esac
 }

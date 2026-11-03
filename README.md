@@ -41,7 +41,7 @@ which calls the workflows below.
   - `openwrt-tests.uv.lock`: pinned Python environment of those tests.
 - `scripts/` (POSIX shell, used by the workflows)
   - SDK image: `resolve-sdk.sh`, `sdk-age-selftest.sh`,
-    `sdk-image-ensure.sh`, `sdk-image-info.sh`.
+    `sdk-image-ensure.sh`, `sdk-image-info.sh`, `ghcr-versions-selftest.sh`.
   - Build: `resolve-build.sh`, `collect-apk.sh`, `build-summary.sh`; feed
     source: `resolve-feed.sh`, `feed-record.sh`, `feed-inputs-selftest.sh`.
   - Test: `validate-inputs.sh`, `caller-inputs-selftest.sh`, `matrix.sh`,
@@ -57,7 +57,8 @@ which calls the workflows below.
   - `lib/common.sh`: shared helpers. `lib/selftest.sh` (case bookkeeping of
     the self-tests), `lib/ghcr.sh` (registry reads),
     `lib/sdk-age.sh` (age rule and reuse/rebuild decision),
-    `lib/sdk-labels.sh` (image label keys).
+    `lib/sdk-labels.sh` (image label keys), `lib/ghcr-versions.sh` (delete of
+    a package version).
 - `docker/sdk-image/Dockerfile`: derives the SDK image from the official one.
 - `.github/workflows/`
   - `build.yml`: reusable SDK build.
@@ -347,7 +348,13 @@ The caller must grant `packages: write` to the job that calls `build.yml`
     for an organization; `<name>` is the last component of `sdk_container`,
     `openwrt-sdk` by default; the version whose `name` is its manifest
     digest). The package versions before and
-    after the delete are printed in the log.
+    after the delete are printed in the log. An HTTP 404 on the delete
+    (`gh: Package not found. (HTTP 404)`, a concurrent run superseded the same
+    version first, run 41586883056) is logged as `already deleted by another
+    run` and is not an error; every other error (401, 403, 409, 500, ...)
+    fails the job. `scripts/ghcr-versions-selftest.sh` (step "Version prune
+    self-test" of the `sdk-image` job) runs `lib/ghcr-versions.sh` against a
+    stub `gh`.
   - No `concurrency` group: GitHub cancels the older pending job of a group,
     which would cancel the build of a run when 3 runs (or several packages
     of one line) need the same rebuild. Instead the decision is made again

@@ -4,9 +4,11 @@
 # followed branch to one commit (resolve-tests-ref.sh, against a local
 # repository) and prepare-tests-env.sh (with a fake `uv`): the commit it
 # reports is the one checked out, a checkout at another commit fails, uv gets
-# the settings and the order (lock --upgrade-package labgrid, then sync
-# --locked) the lock needs, and the labgrid version printed is the one the
-# resulting lock holds, not the seed's. Runs in the targets job of test.yml.
+# the settings and the order (lock --upgrade-package <requirement>, then sync
+# --locked) the lock needs, refuses a uv source other than labgrid and a bad
+# instant, and the labgrid version printed is the one the
+# resulting lock holds, not the seed's. What uv does with the requirement is
+# proven by uv-lock-selftest.sh (real uv). Runs in the targets job of test.yml.
 #
 # Usage:
 #   scripts/tests-env-selftest.sh
@@ -148,11 +150,11 @@ mkdir "${work}/bin"
 cat >"${work}/bin/uv" <<'EOF2'
 #!/usr/bin/env sh
 project=$2
-printf '%s | NO_SOURCES=%s CONFIG=%s NEWER=%s\n' "$*" "${UV_NO_SOURCES:-}" \
-	"${UV_CONFIG_FILE:-}" "${UV_EXCLUDE_NEWER:-}" >>"${FAKE_UV_LOG}"
+printf '%s | NO_SOURCES=%s NEWER=%s\n' "$*" "${UV_NO_SOURCES:-}" \
+	"${UV_EXCLUDE_NEWER:-}" >>"${FAKE_UV_LOG}"
 case "$3" in
 lock)
-	[ "$4" = --upgrade-package ] && [ "$5" = labgrid ] || exit 2
+	[ "$4" = --upgrade-package ] && [ "$5" = "${FAKE_REQUIREMENT}" ] || exit 2
 	cmp -s "${project}/uv.lock" "${FAKE_SEED}" || exit 3
 	printf '[[package]]\nname = "labgrid"\nversion = "%s"\n\n[[package]]\nname = "pyserial-labgrid"\nversion = "3.5.0.2"\n' \
 		"${FAKE_LABGRID}" >"${project}/uv.lock"
@@ -167,24 +169,25 @@ chmod +x "${work}/bin/uv"
 PATH=${work}/bin:${PATH}
 seed=${script_dir}/../harness/openwrt-tests.uv.lock
 export FAKE_UV_LOG="${work}/uv.log" FAKE_SEED="${seed}" FAKE_LABGRID=26.4.2
+export FAKE_REQUIREMENT="${LABGRID_REQUIREMENT}"
 
 git clone -q "${work}/upstream" "${work}/checkout"
 prep() {
 	: >"${FAKE_UV_LOG}"
 	rm -f "${work}/checkout/uv.lock"
+	printf '[project]\nname = "fixture"\n\n[tool.uv.sources]\nlabgrid = { git = "https://example.invalid/labgrid" }\n%s' \
+		"${PYPROJECT_EXTRA:-}" >"${work}/checkout/pyproject.toml"
 	env HARNESS_TESTS_SHA="${HARNESS_TESTS_SHA:-${head_main}}" \
 		HARNESS_TESTS_RESOLVED_AT="${HARNESS_TESTS_RESOLVED_AT:-2026-11-03T10:00:00Z}" \
 		"${script_dir}/prepare-tests-env.sh" "${work}/checkout"
 }
-config=$(cd "${script_dir}/../harness" && pwd)/uv.toml
 expected="UV_NO_SOURCES=1
-UV_CONFIG_FILE=${config}
 UV_EXCLUDE_NEWER=2026-11-03T10:00:00Z
 HARNESS_OPENWRT_TESTS_SHA=${head_main}
 HARNESS_LABGRID_VERSION=26.4.2"
 script_case "prepare: prints the resolved versions and the uv settings" 0 "${expected}" prep
-expected_log="--project ${work}/checkout lock --upgrade-package labgrid | NO_SOURCES=1 CONFIG=${config} NEWER=2026-11-03T10:00:00Z
---project ${work}/checkout sync --locked | NO_SOURCES=1 CONFIG=${config} NEWER=2026-11-03T10:00:00Z"
+expected_log="--project ${work}/checkout lock --upgrade-package ${LABGRID_REQUIREMENT} | NO_SOURCES=1 NEWER=2026-11-03T10:00:00Z
+--project ${work}/checkout sync --locked | NO_SOURCES=1 NEWER=2026-11-03T10:00:00Z"
 uv_log=$(cat "${FAKE_UV_LOG}")
 check_that "prepare: uv gets the settings; lock runs on the seed, then sync --locked" \
 	"${uv_log}" test "${uv_log}" = "${expected_log}"
@@ -206,10 +209,34 @@ script_case "prepare: not a checkout fails" 1 "" \
 	env HARNESS_TESTS_SHA="${head_main}" HARNESS_TESTS_RESOLVED_AT=2026-11-03T10:00:00Z \
 	"${script_dir}/prepare-tests-env.sh" "${work}"
 
+# R1: a uv source other than labgrid would be dropped in silence by
+# UV_NO_SOURCES=1, so the script refuses it before uv runs.
+PYPROJECT_EXTRA='requests = { git = "https://example.invalid/requests" }
+' fails_case "prepare: a uv source other than labgrid fails" prep
+sources_err=$(cat "${work}/err")
+case "${sources_err}" in
+*"uv sources other than labgrid"*requests*) record "prepare: the error names the source" 0 "" ;;
+*) record "prepare: the error names the source" 1 "${sources_err}" ;;
+esac
+check_that "prepare: uv did not run after the refusal" "uv was called" test ! -s "${FAKE_UV_LOG}"
+PYPROJECT_EXTRA='Labgrid = { git = "https://example.invalid/labgrid" }
+' script_case "prepare: the labgrid source is accepted under any spelling" 0 ANY prep
+
+# R5: the instant goes to GITHUB_ENV, so only an RFC 3339 UTC instant passes.
+bad_instant() {
+	rm -f "${work}/checkout/uv.lock"
+	env HARNESS_TESTS_SHA="${head_main}" HARNESS_TESTS_RESOLVED_AT="$1" \
+		"${script_dir}/prepare-tests-env.sh" "${work}/checkout"
+}
+for bad in "" "2026-11-03" "2026-11-03T10:00:00" "2026-11-03T10:00:00+00:00" "2026-11-03T10:00:00Z
+EVIL=1" "x2026-11-03T10:00:00Z"; do
+	bad_label=$(printf '%s' "${bad}" | tr '\n' '~')
+	fails_case "prepare: instant '${bad_label}' fails" bad_instant "${bad}"
+done
+rm -f "${work}/checkout/pyproject.toml"
+fails_case "prepare: a checkout without pyproject.toml fails" bad_instant 2026-11-03T10:00:00Z
+
 # The committed files the script depends on.
-config_text=$(cat "${config}")
-check_that "harness/uv.toml holds labgrid to the 26 series" "${config_text}" \
-	grep -qx 'constraint-dependencies = \["labgrid>=26,<27"\]' "${config}"
 seed_labgrid=$(lock_package_version "${seed}" labgrid)
 case "${seed_labgrid}" in
 26.*) record "seed lock has labgrid 26.x" 0 "" ;;

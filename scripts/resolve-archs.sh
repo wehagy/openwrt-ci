@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Responsibility: turn the `archs` input of build.yml into the architecture
-# matrix of its sdk-image and sdk jobs: the tokens of the input, with `@tests`
+# matrix of its sdk jobs: the tokens of the input, with `@tests`
 # replaced by the package architectures of the QEMU test targets
 # (harness/targets.yml) and `@profiles` by the architectures of the `profiles`
 # input (resolved from profiles.json by scripts/resolve-profiles.sh, which

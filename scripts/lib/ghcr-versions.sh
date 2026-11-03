@@ -41,7 +41,7 @@ ghcr_delete_version() {
 		gdv_left=$(gh api --paginate "$1/versions" --jq ".[] | select(.id == $2) | .id") ||
 			die "cannot list the versions to confirm that $2 is gone"
 		if [ -z "${gdv_left}" ]; then
-			printf 'sdk-image: version %s already deleted by another run (HTTP 404)\n' "$2" >&2
+			printf 'image-refresh: version %s already deleted by another run (HTTP 404)\n' "$2" >&2
 			rm -f "${gdv_err}"
 			printf 'already-gone\n'
 			return 0

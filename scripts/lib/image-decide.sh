@@ -122,23 +122,27 @@ image_stale_decide() {
 	fi
 }
 
-# Print the annotation of a run that finds an image missing (or private): the
-# caller then ends with die. The run only reads the images; the daily refresh
-# writes them.
+# Print, on stderr, the annotation of a run that finds an image missing (or
+# private): the caller then ends with die. It goes to stderr because the
+# scripts that call this print their results on stdout, which a step captures
+# or appends to $GITHUB_ENV. The run only reads the images; the daily refresh
+# writes them. The refresh is a workflow of the CALLER repository (the one
+# that schedules refresh-images.yml), not necessarily the repository whose
+# workflow is running, so the command names the repository given.
 #
 # Arguments:
 #   $1  image, <container>:<tag>
-#   $2  repository of the caller, <owner>/<name>
+#   $2  repository that owns the refresh workflow, <owner>/<name>
 image_missing_error() {
-	printf '::error title=Image missing::%s is missing or not public. The runs only read it; the daily refresh (refresh-images.yml) creates it. Refresh by hand: %s (add -f force=true to rebuild images that are up to date). The package must be public.\n' \
-		"$1" "$(refresh_command "$2")"
+	printf '::error title=Image missing::%s is missing or not public. The runs only read it; the daily refresh (refresh-images.yml) creates it, but only the images that the package configs of %s name (lines, QEMU targets, image profiles in packages/<name>/config.yml). Refresh by hand: %s (add -f force=true to rebuild images that are up to date); if the architecture or the profile is not in a config, add it there first. The package must be public.\n' \
+		"$1" "$2" "$(refresh_command "$2")" >&2
 }
 
 # Print the command that refreshes the images by hand, for the message of a
 # run that finds an image missing.
 #
 # Arguments:
-#   $1  repository of the caller, <owner>/<name>
+#   $1  repository that owns the refresh workflow, <owner>/<name>
 refresh_command() {
 	printf 'gh workflow run refresh-images.yml --repo %s\n' "$1"
 }

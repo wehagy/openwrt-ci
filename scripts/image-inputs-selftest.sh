@@ -682,6 +682,9 @@ HARNESS_TARGET_PATH=ramips/mt7621
 HARNESS_IB_IMAGE=ghcr.io/test/openwrt-imagebuilder:ramips-mt7621-openwrt-25.12
 HARNESS_IB_RELEASE=25.12.6
 HARNESS_IB_GRACE_DAYS=1
+HARNESS_IB_FALLBACK=false
+HARNESS_IB_OFFICIAL_IMAGE=docker.io/openwrt/imagebuilder:ramips-mt7621-25.12.6
+HARNESS_IB_OFFICIAL_SETUP=false
 HARNESS_IMAGE_GLOBS=*sysupgrade* *factory*
 HARNESS_EXPECT=fits' "${ri}" 25.12 glinet-gl-mt1300 netbird
 script_case "resolve-image without a package" 0 ANY "${ri}" main glinet-gl-mt1300 ''
@@ -702,6 +705,28 @@ else
 	record "resolve-image empty package list" 1 "${sc_out}"
 fi
 HARNESS_IMAGE_PACKAGES="owut"
+# The official container of a custom image whose profile is not in the refresh.
+script_case "resolve-image fallback on a snapshot line" 0 ANY env HARNESS_IB_FALLBACK=true "${ri}" main glinet-gl-mt1300 ''
+for want in 'HARNESS_IB_FALLBACK=true' \
+	'HARNESS_IB_OFFICIAL_IMAGE=docker.io/openwrt/imagebuilder:ramips-mt7621-main' \
+	'HARNESS_IB_OFFICIAL_SETUP=true'; do
+	if grep -qxF -- "${want}" "${work}/out"; then
+		record "resolve-image fallback on a snapshot line has ${want}" 0 ""
+	else
+		record "resolve-image fallback on a snapshot line has ${want}" 1 "${sc_out}"
+	fi
+done
+script_case "resolve-image fallback on a release line" 0 ANY env HARNESS_IB_FALLBACK=true "${ri}" 25.12 glinet-gl-mt1300 ''
+for want in 'HARNESS_IB_OFFICIAL_IMAGE=docker.io/openwrt/imagebuilder:ramips-mt7621-25.12.6' \
+	'HARNESS_IB_OFFICIAL_SETUP=false'; do
+	if grep -qxF -- "${want}" "${work}/out"; then
+		record "resolve-image fallback on a release line has ${want}" 0 ""
+	else
+		record "resolve-image fallback on a release line has ${want}" 1 "${sc_out}"
+	fi
+done
+script_case "resolve-image invalid fallback prints nothing" 1 '' env HARNESS_IB_FALLBACK=maybe "${ri}" main glinet-gl-mt1300 ''
+script_case "resolve-image invalid official container prints nothing" 1 '' env "HARNESS_IB_BASE_CONTAINER=docker.io/Open;wrt" "${ri}" main glinet-gl-mt1300 ''
 script_case "resolve-image expect too-big" 0 ANY env HARNESS_IMAGE_EXPECT=too-big "${ri}" main glinet-gl-mt1300 netbird
 if grep -qxF 'HARNESS_EXPECT=too-big' "${work}/out"; then
 	record "resolve-image expect too-big output" 0 ""

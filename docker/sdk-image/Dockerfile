@@ -19,9 +19,9 @@
 # the official SDK container does not ship it, so the check validated nothing
 # (`find: 'shfmt': No such file or directory`). It is installed from the
 # release binary of mvdan/sh, verified against the sha256 below, and the build
-# fails if it is missing or reports another version. The sha256 of this file is
-# an image label (scripts/image-refresh.sh): a change here rebuilds the
-# image even when it is younger than the maximum age.
+# fails if it is missing or reports another version. The sha256 of this file,
+# ib-setup.sh and lib/common.sh is an image label (scripts/image-refresh.sh): a
+# change in any of them rebuilds the image, however young it is.
 #
 # setup.sh is removed because the entrypoint of openwrt/gh-action-sdk runs
 # `[ ! -f setup.sh ] || bash setup.sh`, and a second run would fail on the

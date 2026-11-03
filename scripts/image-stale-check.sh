@@ -17,7 +17,7 @@
 #   HARNESS_STALE_DAYS    grace period, whole days (default: 1)
 #   HARNESS_IB_RELEASE    latest release of a release line now (Image Builder
 #                         images of such a line)
-#   GITHUB_REPOSITORY     repository of the caller, in the refresh command
+#   HARNESS_REFRESH_REPOSITORY     repository of the caller, in the refresh command
 #   HARNESS_NOW           current time, Unix seconds (for tests; default: now)
 
 set -eu
@@ -105,7 +105,7 @@ stale | unknown)
 	[ -z "${detail}" ] || reason="${reason}; ${detail}"
 	printf 'warn: %s is %s: %s\n' "${image}" "${state}" "${reason}" >&2
 	printf '::warning title=Image %s::%s is %s: %s. The daily refresh updates it; by hand: %s\n' \
-		"${state}" "${image}" "${state}" "${reason}" "$(refresh_command "${GITHUB_REPOSITORY:-<owner>/<repo>}")"
+		"${state}" "${image}" "${state}" "${reason}" "$(refresh_command "${HARNESS_REFRESH_REPOSITORY:-<owner>/<repo>}")"
 	;;
 *) die "unexpected state of the freshness check" ;;
 esac

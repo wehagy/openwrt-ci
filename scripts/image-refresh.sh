@@ -6,7 +6,7 @@
 # scheduled refresh (.github/workflows/refresh-images.yml), never in a build.
 #
 # The image is rebuilt only when what it is made of changed (lib/image-decide.sh,
-# image_decide): it is missing, the recipe (the Dockerfile) changed, or its
+# image_decide): it is missing, the recipe (the Dockerfile and the scripts it copies) changed, or its
 # upstream changed. Upstream is, for mode "build" (SDK, and the Image Builder
 # of a snapshot line), the sha256 of the archive that the official container's
 # setup.sh would download, read from the sha256sums it names; for mode "mirror"
@@ -222,13 +222,21 @@ if [ "${force}" = true ]; then
 	refresh_since=$(date +%s)
 fi
 
-# The Dockerfile is the recipe of the image: its sha256 is a label, and an
-# image labelled with another one (or none) is rebuilt. A mirror has none.
+# The recipe of the image is what the build copies and runs: the Dockerfile and
+# the two scripts it copies into the image (ib-setup.sh, which runs setup.sh,
+# and lib/common.sh). The sha256 of the three, in this order, is a label, and
+# an image labelled with another one (or none) is rebuilt. A mirror has none.
+# The digest of the official container the build starts from is recorded but
+# does not decide: that container is republished with every snapshot, which
+# would rebuild the image daily whatever the archive did.
 recipe_sha=
 if [ "${mode}" = build ]; then
-	recipe_sha=$(sha256sum "${script_dir}/../${dockerfile_dir}/Dockerfile") || die "cannot hash the Dockerfile"
+	recipe_file="${work_dir}/recipe"
+	cat "${script_dir}/../${dockerfile_dir}/Dockerfile" "${script_dir}/ib-setup.sh" \
+		"${script_dir}/lib/common.sh" >"${recipe_file}" || die "cannot read the recipe files"
+	recipe_sha=$(sha256sum "${recipe_file}") || die "cannot hash the recipe"
 	recipe_sha=${recipe_sha%% *}
-	[ "${#recipe_sha}" -eq 64 ] || die "unexpected sha256 of the Dockerfile"
+	[ "${#recipe_sha}" -eq 64 ] || die "unexpected sha256 of the recipe"
 fi
 
 # Read the image of the tag and decide with image_decide. Sets old_digest and

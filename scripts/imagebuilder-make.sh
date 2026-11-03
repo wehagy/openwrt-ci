@@ -41,6 +41,12 @@
 #                         be set). The built package may be listed by name; it
 #                         is requested by the path of its .apk either way
 #   HARNESS_TARGET_PATH   <target>/<subtarget> (required)
+#   HARNESS_IB_SETUP      true: download the ImageBuilder with ./setup.sh first
+#                         (the official snapshot container of a custom image
+#                         whose profile is not in the refresh; scripts/ib-setup.sh
+#                         retries a sha256 mismatch within
+#                         HARNESS_IB_SETUP_BUDGET); false: it is in the image
+#                         (default: false)
 #   HARNESS_APK_DIR       directory with the built .apk (default: /harness/in)
 #   HARNESS_PACKAGE       package name, to find its .apk; empty: no package of
 #                         our own, nothing to copy (required to be set)
@@ -62,6 +68,7 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 profile=${HARNESS_PROFILE:?HARNESS_PROFILE is required}
 packages=${HARNESS_PACKAGES?HARNESS_PACKAGES is required}
 target_path=${HARNESS_TARGET_PATH:?HARNESS_TARGET_PATH is required}
+setup=${HARNESS_IB_SETUP:-false}
 package=${HARNESS_PACKAGE?HARNESS_PACKAGE is required}
 apk_dir=${HARNESS_APK_DIR:-/harness/in}
 out_dir=${HARNESS_OUT_DIR:-/harness/out}
@@ -72,9 +79,24 @@ fi
 
 # ---------------------------------------------------------------------------
 # ImageBuilder: it is in the image (the daily refresh runs setup.sh once, or
-# copies the release container, which has it); nothing is downloaded here.
+# copies the release container, which has it). The one exception is a custom
+# image whose profile is not in the refresh, which runs on the official
+# snapshot container (scripts/pull-imagebuilder.sh sets HARNESS_IB_SETUP=true).
 # ---------------------------------------------------------------------------
-[ -f Makefile ] || die "no ImageBuilder in the image (no Makefile in ${PWD})"
+setup_seconds=0
+case "${setup}" in
+true)
+	start=$(date +%s)
+	# Repeats setup.sh when the mirror serves an archive that does not match
+	# the sha256sums (see scripts/ib-setup.sh); any other failure is final.
+	TARGET=${target_path} "${script_dir}/ib-setup.sh"
+	end=$(date +%s)
+	setup_seconds=$((end - start))
+	;;
+false) [ -f Makefile ] || die "no ImageBuilder in the image (no Makefile in ${PWD})" ;;
+*) die "HARNESS_IB_SETUP must be true or false" ;;
+esac
+printf '%s\n' "${setup_seconds}" >"${out_dir}/setup-seconds"
 
 # ---------------------------------------------------------------------------
 # Build.

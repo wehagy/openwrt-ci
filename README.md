@@ -46,7 +46,11 @@ which calls the workflows below.
     read them): `image-refresh.sh`, `refresh-plan.sh`, `resolve-refresh.sh`,
     `resolve-sdk.sh`, `image-decide-selftest.sh`, `ghcr-versions-selftest.sh`;
     the builds' side: `sdk-image-info.sh`, `pull-imagebuilder.sh`,
-    `image-stale-check.sh`. `lib/image-decide.sh` (rebuild/reuse and stale
+    `image-stale-check.sh`; self-tests with stub registry, docker, gh and curl
+    (`lib/image-stubs.sh`): `image-refresh-selftest.sh` (the writer),
+    `image-read-selftest.sh` (the readers), `workflow-permissions-selftest.sh`
+    (only `sdk` and `ib` of `refresh-images.yml` have `packages: write`).
+    `lib/image-decide.sh` (rebuild/reuse and stale
     rules), `lib/image-upstream.sh` (the official container's sha256sums).
   - Build: `resolve-build.sh`, `collect-apk.sh`, `build-summary.sh`; feed
     source: `resolve-feed.sh`, `feed-record.sh`, `feed-inputs-selftest.sh`.
@@ -300,6 +304,27 @@ Refresh by hand (all images; only those whose upstream changed are rebuilt;
 
 A build or image job that finds its image missing or private fails with this
 command in the message (`::error title=Image missing::`).
+
+The command names the repository that owns the refresh workflow, not
+necessarily the one the job runs in: `build.yml` and `images.yml` take the
+optional input `refresh_repository` (`<owner>/<name>`, default the calling
+repository), which this repository's own `ci.yml` sets to
+`wehagy/openwrt-ci-packages`. The refresh builds only what the package
+configs of that repository name (lines, QEMU targets, image profiles), so the
+message also says to add a missing architecture or profile to a
+`packages/<name>/config.yml` first. The annotation is printed on stderr, so a
+step that captures stdout does not swallow it.
+
+A one-off image of a profile that no config names (the `custom-image` form of
+the caller, `other_profile`) does not need the refresh: `images.yml` has the
+input `ib_fallback` (default `false`). When it is `true` and the harness Image
+Builder image is missing (HTTP 404 only; any other answer fails), the job takes
+the official container instead (`docker.io/openwrt/imagebuilder:<target>-<subtarget>-<release>`
+for a release line, `...-<imagebuilder_tag_suffix>` for a snapshot line,
+whose `setup.sh` the job runs, about 10 minutes more), says so in a
+`::notice title=Image Builder downloaded at run time::` and writes nothing to
+GHCR. The SDK has no such fallback: a package built for an architecture that
+no config names fails with the message above.
 
 ### Known limits
 
@@ -646,7 +671,12 @@ the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci
 - Image Builder: the harness image `<ib_container>:<target>-<subtarget>-<imagebuilder_tag_suffix>`
   (default `ghcr.io/wehagy/openwrt-imagebuilder`, `scripts/resolve-image.sh`), read only: the daily refresh
   (`refresh-images.yml`) copies the official release container (`25.12`) or
-  runs the `setup.sh` of the snapshot container once (`main`). A missing image
+  runs the `setup.sh` of the snapshot container once (`main`). The recipe hash
+  (the label that makes a changed recipe rebuild the image) covers the
+  `Dockerfile`, `ib-setup.sh` and `lib/common.sh`; the digest of the official
+  container the snapshot build starts from is recorded but does not decide
+  (that container is republished with every snapshot, which would rebuild the
+  image daily). A missing image
   fails the job with the refresh command; a stale one only warns
   (`scripts/pull-imagebuilder.sh`, `scripts/image-stale-check.sh`). The image
   jobs download no Image Builder. Of the text below, `<tag>` is the tag of the
@@ -790,7 +820,11 @@ Dispatch inputs: `lines`
 see "Feed source"); `stages` (`all`, or `build` to skip the test and image
 jobs); `profiles` and `packages` (the `profiles` and `packages` inputs; empty
 profiles: `x86/64/generic`, passed to `build.yml` and `images.yml` like any caller; empty packages: none, so the image holds the Image Builder's default packages
-and the package under test). Each build job has `packages: write`. The job `feed-report` prints the
+and the package under test). No job has `packages: write` (the workflow
+`workflow-permissions-selftest.sh` fails if one gets it). It passes
+`refresh_repository: wehagy/openwrt-ci-packages` to every `build.yml` and
+`images.yml` call, so a missing image names the repository whose
+`refresh-images.yml` creates it. The job `feed-report` prints the
 feed outputs (`feed_repository`, `feed_ref`, `feed_sha`) of the builds that
 succeeded.
 

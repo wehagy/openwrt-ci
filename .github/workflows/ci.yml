@@ -71,6 +71,7 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       ci_ref: ${{ github.sha }}
+      refresh_repository: wehagy/openwrt-ci-packages
       line: "25.12"
       package: ${{ inputs.package || 'chrony' }}
       feed_repository: ${{ inputs.feed_repository }}
@@ -83,6 +84,7 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       ci_ref: ${{ github.sha }}
+      refresh_repository: wehagy/openwrt-ci-packages
       line: main
       package: ${{ inputs.package || 'chrony' }}
       feed_repository: ${{ inputs.feed_repository }}
@@ -127,6 +129,7 @@ jobs:
     uses: ./.github/workflows/images.yml
     with:
       ci_ref: ${{ github.sha }}
+      refresh_repository: wehagy/openwrt-ci-packages
       line: "25.12"
       package: ${{ inputs.package || 'chrony' }}
       profiles: ${{ inputs.profiles || 'x86/64/generic' }}
@@ -138,6 +141,7 @@ jobs:
     uses: ./.github/workflows/images.yml
     with:
       ci_ref: ${{ github.sha }}
+      refresh_repository: wehagy/openwrt-ci-packages
       line: main
       package: ${{ inputs.package || 'chrony' }}
       profiles: ${{ inputs.profiles || 'x86/64/generic' }}

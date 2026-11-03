@@ -16,6 +16,15 @@
 # for a snapshot), which scripts/image-stale-check.sh compares with the
 # release the image holds.
 #
+# HARNESS_IB_OFFICIAL_IMAGE is the official container
+# (docker.io/openwrt/imagebuilder:<tag>) that image comes from and
+# HARNESS_IB_OFFICIAL_SETUP says whether it needs setup.sh run in the job
+# (a snapshot container does, a release container does not). They are used only
+# when HARNESS_IB_FALLBACK is true (a custom image whose profile is not in the
+# refresh) and the harness image is missing: scripts/pull-imagebuilder.sh then
+# takes the official one, downloaded at run time, with a notice. Nothing is
+# written to GHCR.
+#
 # HARNESS_EXPECT is "too-big" for a profile given with the :too-big suffix
 # (its image is known not to fit the flash), otherwise "fits".
 #
@@ -33,6 +42,10 @@
 #   HARNESS_IMAGE_ARCH, HARNESS_IMAGE_EXPECT
 #                        the matrix entry (required)
 #   HARNESS_IMAGE_PACKAGES  the `packages` input (default: empty)
+#   HARNESS_IB_FALLBACK  true to allow the official container when the harness
+#                        image is missing (default: false)
+#   HARNESS_IB_BASE_CONTAINER  official Image Builder container (default:
+#                        docker.io/openwrt/imagebuilder)
 #   HARNESS_DIR          directory with lines.yml and images.yml
 #                        (default: <repo>/harness)
 #   HARNESS_IB_CONTAINER harness ImageBuilder image repository, required; set
@@ -109,6 +122,23 @@ check_grace_days "${grace_days}"
 ib_image_tag=$(ib_tag "${target}" "${subtarget}" "${tag_suffix}")
 check_sdk_tag "${ib_image_tag}"
 
+# The official container the image comes from, for a custom image whose profile
+# is not in the refresh (pull-imagebuilder.sh, HARNESS_IB_FALLBACK=true). A
+# snapshot container only ships setup.sh, so it needs it run in the job.
+fallback=${HARNESS_IB_FALLBACK:-false}
+check_bool "${fallback}"
+official_container=${HARNESS_IB_BASE_CONTAINER:-docker.io/openwrt/imagebuilder}
+case "${official_container}" in
+*[!a-z0-9./_-]* | '') die "invalid base Image Builder container" ;;
+*) ;;
+esac
+official_tag=$(ib_official_tag "${release_source}" "${target}" "${subtarget}" "${tag_suffix}" "${release}")
+check_sdk_tag "${official_tag}"
+case "${release_source}" in
+releases) official_setup=false ;;
+*) official_setup=true ;;
+esac
+
 printf 'HARNESS_LINE=%s\n' "${LINE}"
 printf 'HARNESS_PROFILE_ID=%s\n' "${PROFILE_ID}"
 printf 'HARNESS_PROFILE=%s\n' "${profile}"
@@ -123,5 +153,8 @@ printf 'HARNESS_TARGET_PATH=%s/%s\n' "${target}" "${subtarget}"
 printf 'HARNESS_IB_IMAGE=%s:%s\n' "${container}" "${ib_image_tag}"
 printf 'HARNESS_IB_RELEASE=%s\n' "${release}"
 printf 'HARNESS_IB_GRACE_DAYS=%s\n' "${grace_days}"
+printf 'HARNESS_IB_FALLBACK=%s\n' "${fallback}"
+printf 'HARNESS_IB_OFFICIAL_IMAGE=%s:%s\n' "${official_container}" "${official_tag}"
+printf 'HARNESS_IB_OFFICIAL_SETUP=%s\n' "${official_setup}"
 printf 'HARNESS_IMAGE_GLOBS=%s\n' "${image_globs}"
 printf 'HARNESS_EXPECT=%s\n' "${expect}"

@@ -190,3 +190,24 @@ ib_tag() {
 	check_charset "ImageBuilder tag suffix" "$3" '[!A-Za-z0-9._-]'
 	printf '%s-%s-%s\n' "$1" "$2" "$3"
 }
+
+# Print the tag of the official Image Builder container
+# (docker.io/openwrt/imagebuilder) that an Image Builder image comes from: the
+# tag of the snapshot container for a snapshot line (a container with only
+# setup.sh, run once by the refresh), the one of the latest release for a
+# release line (already set up). One place for the refresh, which copies or
+# builds from it, and for a custom image, which falls back to it.
+#
+# Arguments:
+#   $1  release_source of the line: releases or snapshot
+#   $2  target
+#   $3  subtarget
+#   $4  imagebuilder_tag_suffix of the line (harness/lines.yml)
+#   $5  latest release of a release line (ignored for a snapshot)
+ib_official_tag() {
+	case "$1" in
+	releases) ib_tag "$2" "$3" "$5" ;;
+	snapshot) ib_tag "$2" "$3" "$4" ;;
+	*) die "unsupported release_source (allowed: releases, snapshot)" ;;
+	esac
+}

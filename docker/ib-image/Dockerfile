@@ -13,7 +13,8 @@
 #
 # The line of /builder/.archive is the verified "<sha256> *<archive>" line
 # printed by setup.sh; scripts/image-refresh.sh copies it into image labels.
-# The sha256 of this file is an image label: a change here rebuilds the image.
+# The sha256 of this file, ib-setup.sh and lib/common.sh is an image label: a
+# change in any of them rebuilds the image.
 #
 # setup.sh runs through scripts/ib-setup.sh, which repeats it only when the
 # archive does not match the sha256sums (see the Dockerfile of the SDK image).

@@ -130,6 +130,23 @@ jobs:
       - name: Setup retry self-test
         run: ci-base/scripts/ib-setup-selftest.sh
 
+      # The only code that writes the images, with a stub registry, docker,
+      # gh and curl: the source label of both modes, a forced rebuild, the
+      # prune of the superseded version, the archive name check, the recipe
+      # hash, the re-check before the push and a denied push.
+      - name: Image refresh self-test
+        run: ci-base/scripts/image-refresh-selftest.sh
+
+      # The readers of the images (missing, private, fallback, stale): a
+      # missing image is an error that names the repository that owns the
+      # refresh, and only a 404 is a missing image.
+      - name: Image read self-test
+        run: ci-base/scripts/image-read-selftest.sh
+
+      # Which jobs may write packages: only sdk and ib of this workflow.
+      - name: Workflow permissions self-test
+        run: ci-base/scripts/workflow-permissions-selftest.sh
+
       - name: Image inputs self-test
         run: ci-base/scripts/image-inputs-selftest.sh
 

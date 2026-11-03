@@ -35,6 +35,16 @@ on:
         type: string
         required: false
         default: ghcr.io/wehagy/openwrt-sdk
+      refresh_repository:
+        description: >-
+          Repository that owns the refresh workflow (<owner>/<name>), named in
+          the command a missing image fails with. Empty: the calling
+          repository (github.repository), right when the caller schedules the
+          refresh; a repository that only runs this workflow for its own tests
+          names the one that does.
+        type: string
+        required: false
+        default: ""
       archs:
         description: >-
           Package architectures to build, separated by spaces or newlines:
@@ -152,6 +162,11 @@ jobs:
       - name: Image freshness self-test
         run: ci-base/scripts/image-decide-selftest.sh
 
+      # The readers of the image (missing, private, stale) and the command a
+      # missing image fails with, with a stub registry.
+      - name: Image read self-test
+        run: ci-base/scripts/image-read-selftest.sh
+
       - name: Image inputs self-test
         run: ci-base/scripts/image-inputs-selftest.sh
 
@@ -256,7 +271,7 @@ jobs:
       # warns if it is stale, and records <tag>@<digest> (HARNESS_SDK_PIN).
       - name: Pin the SDK image
         env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          HARNESS_REFRESH_REPOSITORY: ${{ inputs.refresh_repository || github.repository }}
         run: |
           info=$(ci-base/scripts/sdk-image-info.sh)
           echo "${info}" | tee -a "${GITHUB_ENV}"

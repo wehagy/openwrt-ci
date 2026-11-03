@@ -14,7 +14,7 @@
 #
 # Environment variables (set by scripts/resolve-sdk.sh and the workflow):
 #   HARNESS_SDK_CONTAINER, HARNESS_SDK_ARCH, HARNESS_SDK_GRACE_DAYS
-#   GITHUB_REPOSITORY  repository of the caller, in the refresh command
+#   HARNESS_REFRESH_REPOSITORY  repository of the caller, in the refresh command
 
 set -eu
 
@@ -35,7 +35,8 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 container=${HARNESS_SDK_CONTAINER:?HARNESS_SDK_CONTAINER is required}
 tag=${HARNESS_SDK_ARCH:?HARNESS_SDK_ARCH is required}
 grace=${HARNESS_SDK_GRACE_DAYS:?HARNESS_SDK_GRACE_DAYS is required}
-repository=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}
+repository=${HARNESS_REFRESH_REPOSITORY:?HARNESS_REFRESH_REPOSITORY is required}
+check_feed_repository "${repository}"
 
 check_sdk_container "${container}"
 check_sdk_tag "${tag}"
@@ -64,7 +65,7 @@ check_sdk_archive "${archive_sha}" "${archive}"
 # stdout is the file of the job environment.
 jq -c '.config.Labels // {}' "${work_dir}/config.json" >"${work_dir}/labels.json" ||
 	die "cannot read the labels"
-HARNESS_STALE_DAYS=${grace} GITHUB_REPOSITORY=${repository} \
+HARNESS_STALE_DAYS=${grace} HARNESS_REFRESH_REPOSITORY=${repository} \
 	"${script_dir}/image-stale-check.sh" "${work_dir}/labels.json" "${container}:${tag}" >&2
 
 # stderr: stdout goes to $GITHUB_ENV.

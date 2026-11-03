@@ -13,7 +13,8 @@
 # `packages: write` and none downloads an ImageBuilder. A missing image fails
 # the job with the command that refreshes it by hand; an image that differs
 # from its upstream for more than the line's image_grace_days only raises a
-# warning annotation.
+# warning annotation. A custom image of a profile that is not in the refresh
+# (ib_fallback) takes the official container, downloaded at run time.
 name: images
 
 on:
@@ -58,6 +59,25 @@ on:
         type: string
         required: false
         default: ghcr.io/wehagy/openwrt-imagebuilder
+      ib_fallback:
+        description: >-
+          When the harness ImageBuilder image is missing (the profile is not in
+          the refresh of the caller), use the official OpenWrt container,
+          downloaded at run time, with a notice, instead of failing. Nothing is
+          written to GHCR. For one-off images such as the custom-image form.
+        type: boolean
+        required: false
+        default: false
+      refresh_repository:
+        description: >-
+          Repository that owns the refresh workflow (<owner>/<name>), named in
+          the command a missing image fails with. Empty: the calling
+          repository (github.repository), right when the caller schedules the
+          refresh; a repository that only runs this workflow for its own tests
+          names the one that does.
+        type: string
+        required: false
+        default: ""
       ci_ref:
         description: >-
           Ref (branch, tag or commit) of wehagy/openwrt-ci the scripts, harness data
@@ -119,6 +139,11 @@ jobs:
       # image) and the readers of its labels, with a stub curl.
       - name: Image freshness self-test
         run: ci-base/scripts/image-decide-selftest.sh
+
+      # The readers of the image (missing, private, fallback, stale) and the
+      # command a missing image fails with, with a stub registry.
+      - name: Image read self-test
+        run: ci-base/scripts/image-read-selftest.sh
 
       # Fixed text: the pinned package list, the apk metadata, the check that
       # the image holds the local apk and the FormatPackages repair.
@@ -213,6 +238,7 @@ jobs:
           HARNESS_IMAGE_ARCH: ${{ matrix.arch }}
           HARNESS_IMAGE_EXPECT: ${{ matrix.expect }}
           HARNESS_IMAGE_PACKAGES: ${{ inputs.packages }}
+          HARNESS_IB_FALLBACK: ${{ inputs.ib_fallback }}
         run: |
           resolved=$(ci-base/scripts/resolve-image.sh "${LINE}" "${PROFILE_ID}" "${PACKAGE}")
           echo "${resolved}" | tee -a "${GITHUB_ENV}"
@@ -235,7 +261,7 @@ jobs:
       # with the manual refresh command, a stale one only warns.
       - name: Pull the ImageBuilder image
         env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          HARNESS_REFRESH_REPOSITORY: ${{ inputs.refresh_repository || github.repository }}
         run: ci-base/scripts/pull-imagebuilder.sh "${HARNESS_IB_IMAGE}" | tee -a "${GITHUB_ENV}"
 
       # The container user (uid 1000) is not the runner user, so the output
@@ -245,7 +271,7 @@ jobs:
           mkdir -m 0777 "${IB_OUT}"
           docker run --rm \
             --env HARNESS_PROFILE --env HARNESS_PACKAGES --env HARNESS_PACKAGE \
-            --env HARNESS_TARGET_PATH \
+            --env HARNESS_TARGET_PATH --env HARNESS_IB_SETUP \
             --volume "${GITHUB_WORKSPACE}/ci-base/scripts:/harness/scripts:ro" \
             --volume "${APK_IN}:/harness/in:ro" \
             --volume "${IB_OUT}:/harness/out" \

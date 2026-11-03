@@ -86,16 +86,16 @@ ib)
 		check_charset "release" "${release}" '[!A-Za-z0-9._-]'
 		mode=mirror
 		dockerfile=
-		base_tag=$(ib_tag "${target}" "${subtarget}" "${release}")
 		;;
 	snapshot)
 		release=
 		mode=build
 		dockerfile=docker/ib-image
-		base_tag=${tag}
 		;;
 	*) die "unsupported release_source of line ${LINE}" ;;
 	esac
+	base_tag=$(ib_official_tag "${release_source}" "${target}" "${subtarget}" "${suffix}" "${release}")
+	check_sdk_tag "${base_tag}"
 	printf 'HARNESS_IMG_KIND=ib\n'
 	printf 'HARNESS_IMG_MODE=%s\n' "${mode}"
 	printf 'HARNESS_IMG_CONTAINER=%s\n' "${container}"

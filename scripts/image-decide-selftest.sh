@@ -254,7 +254,7 @@ write_labels() {
 # ${work}/out. Arguments: environment assignments, then nothing.
 run_check() {
 	env PATH="${work}/stub:${PATH}" STUB_SERVE="${work}/served" HARNESS_NOW="${now}" \
-		GITHUB_REPOSITORY=acme/pkgs "$@" "${script_dir}/image-stale-check.sh" "${work}/labels.json" ghcr.io/acme/img:tag
+		HARNESS_REFRESH_REPOSITORY=acme/pkgs "$@" "${script_dir}/image-stale-check.sh" "${work}/labels.json" ghcr.io/acme/img:tag
 }
 
 # Expect the check to succeed and its stdout to contain (or not) a text.
@@ -300,7 +300,7 @@ script_case "check: labels to compare are missing" 0 ANY run_check env
 check_out "check: missing labels warn" "no label to compare" has
 
 # image_missing_error and refresh_command
-msg=$(image_missing_error ghcr.io/acme/img:tag acme/pkgs)
+msg=$(image_missing_error ghcr.io/acme/img:tag acme/pkgs 2>&1)
 case "${msg}" in
 "::error title=Image missing::ghcr.io/acme/img:tag is missing"*"gh workflow run refresh-images.yml --repo acme/pkgs"*) record "missing image annotation" 0 "" ;;
 *) record "missing image annotation" 1 "${msg}" ;;

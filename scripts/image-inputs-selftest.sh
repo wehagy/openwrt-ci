@@ -717,6 +717,24 @@ luci-dnsmasq-extra - 1-r1
 netbird - 0.78.1-r1
 owut - 2-r1
 EOF
+# What imagebuilder-make.sh leaves for the check that the image holds the
+# built apk: the apk metadata, the local index and the installed record. The
+# index hash is 0123456789abcdef x4; ASNFZ4mrze8BI0VniavN7wEjRWc= is Q1 +
+# base64 of its first 20 bytes, the checksum of a record installed from it.
+cat >"${ib}/local-apk.dump" <<'DUMP'
+info:
+  name: netbird
+  version: 0.78.1-r1
+  arch: x86_64
+DUMP
+cat >"${ib}/local-index.dump" <<'DUMP'
+packages: # 1 items
+  - name: netbird
+    version: 0.78.1-r1
+    hashes: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    arch: x86_64
+DUMP
+printf 'C:Q1ASNFZ4mrze8BI0VniavN7wEjRWc=\nP:netbird\nV:0.78.1-r1\n\n' >"${ib}/local-installed.db"
 export HARNESS_IMAGE_GLOBS='*sysupgrade*'
 collect() {
 	# Arguments: $1 package, $2 version, $3 packages input
@@ -736,6 +754,33 @@ script_case "collect: wrong package version fails" 1 '' collect netbird 0.78.0-r
 script_case "collect: package missing from the manifest fails" 1 '' collect nope 1-r1 ""
 script_case "collect: invalid packages input fails" 1 '' collect netbird 0.78.1-r1 "owut;id"
 script_case "collect: a package without a version fails" 1 '' collect netbird '' ""
+# The same image, but the installed netbird is the feed's (another checksum),
+# or the apk metadata is of another version than its file name, or the
+# evidence is missing.
+#
+# Arguments:
+#   $1  Image Builder output directory
+collect_in() {
+	rm -rf "${work}/img"
+	HARNESS_PACKAGE=netbird HARNESS_PACKAGE_VERSION=0.78.1-r1 HARNESS_IMAGE_PACKAGES='' "${ci}" "$1" "${work}/img"
+}
+ib_feed=${work}/ib-feed
+cp -R "${ib}" "${ib_feed}"
+printf 'C:Q1WcaXbNgoDLiKQt3UeHGPhhiX4P0=\nP:netbird\nV:0.78.1-r1\n\n' >"${ib_feed}/local-installed.db"
+script_case "collect: same version installed from the feed fails" 1 '' collect_in "${ib_feed}"
+case "${sc_err}" in
+*"not the locally built apk"*) record "collect: feed package is named as the cause" 0 "" ;;
+*) record "collect: feed package is named as the cause" 1 "${sc_err}" ;;
+esac
+ib_meta=${work}/ib-meta
+cp -R "${ib}" "${ib_meta}"
+sed 's/0.78.1-r1/0.99.0-r1/' "${ib}/local-apk.dump" >"${ib_meta}/local-apk.dump"
+script_case "collect: metadata version differs from the file name fails" 1 '' collect_in "${ib_meta}"
+ib_nodump=${work}/ib-nodump
+cp -R "${ib}" "${ib_nodump}"
+rm "${ib_nodump}/local-index.dump"
+script_case "collect: missing local index fails" 1 '' collect_in "${ib_nodump}"
+script_case "collect: local package passes the check" 0 ANY collect_in "${ib}"
 unset HARNESS_IMAGE_GLOBS
 
 echo

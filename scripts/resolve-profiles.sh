@@ -12,17 +12,18 @@
 #   matrix={"include":[{"profile":<id>,"target":..,"subtarget":..,
 #                       "device":<profile>,"arch":..,"expect":fits|too-big}]}
 #   archs=<architecture> ... (sorted, unique)
+#   count=<number of profiles>
 #
-# An empty input selects the default of the harness, `profiles` of
-# harness/images.yml (the base's own test profile).
+# An empty input is valid and means "no image": the matrix is empty, `archs` is
+# empty and `count` is 0 (the workflow skips the image jobs and says so).
+# The base has no default profile; a caller that wants images names them.
 #
 # Usage:
 #   scripts/resolve-profiles.sh <line> >> "$GITHUB_OUTPUT"
 #
 # Environment variables:
-#   HARNESS_PROFILES  profile tokens (see lib/image-inputs.sh); empty: default
-#   HARNESS_DIR       directory with lines.yml and images.yml
-#                     (default: <repo>/harness)
+#   HARNESS_PROFILES  profile tokens (see lib/image-inputs.sh); empty: no image
+#   HARNESS_DIR       directory with lines.yml (default: <repo>/harness)
 #   HARNESS_RELEASE   releases lines only: pin the release instead of scanning
 #                     the releases index
 
@@ -42,12 +43,12 @@ export LINE
 check_line "${LINE}"
 harness_dir=${HARNESS_DIR:-${script_dir}/../harness}
 lines_file=${harness_dir}/lines.yml
-images_file=${harness_dir}/images.yml
 
 profiles=${HARNESS_PROFILES:-}
 profiles_blank=$(printf '%s' "${profiles}" | tr -d ' \n\t\r') || die "cannot read the profiles"
 if [ -z "${profiles_blank}" ]; then
-	profiles=$(yq_get "${images_file}" '.profiles')
+	printf 'matrix={"include":[]}\narchs=\ncount=0\n'
+	exit 0
 fi
 tokens=$(profile_tokens "${profiles}")
 
@@ -144,3 +145,5 @@ matrix=$(jq -R -s -c '
 archs=$(cut -f5 "${work}/rows.tsv" | sort -u | tr '\n' ' ')
 printf 'matrix=%s\n' "${matrix}"
 printf 'archs=%s\n' "${archs% }"
+count=$(wc -l <"${work}/rows.tsv") || die "cannot count the profiles"
+printf 'count=%s\n' "$((count + 0))"

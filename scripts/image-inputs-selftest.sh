@@ -257,7 +257,6 @@ lines:
 EOF
 cat >"${fixtures}/images.yml" <<'EOF'
 image_globs: "*sysupgrade* *factory*"
-profiles: x86/64/generic
 EOF
 cat >"${fixtures}/targets.yml" <<'EOF'
 targets:
@@ -312,19 +311,36 @@ ri=${script_dir}/resolve-image.sh
 # --- resolve-profiles.sh ---------------------------------------------------
 
 export HARNESS_PROFILES=
-script_case "resolve-profiles default profile" 0 \
+script_case "resolve-profiles no profile means no image" 0 \
+	'matrix={"include":[]}
+archs=
+count=0' "${rp}" 25.12
+script_case "resolve-profiles no profile on main" 0 \
+	'matrix={"include":[]}
+archs=
+count=0' "${rp}" main
+HARNESS_PROFILES="  
+"
+script_case "resolve-profiles blank profiles mean no image" 0 \
+	'matrix={"include":[]}
+archs=
+count=0' "${rp}" 25.12
+HARNESS_PROFILES="x86/64/generic"
+script_case "resolve-profiles one profile" 0 \
 	'matrix={"include":[{"profile":"x86-64-generic","target":"x86","subtarget":"64","device":"generic","arch":"x86_64","expect":"fits"}]}
-archs=x86_64' "${rp}" 25.12
-script_case "resolve-profiles default profile on main" 0 ANY "${rp}" main
+archs=x86_64
+count=1' "${rp}" 25.12
 HARNESS_PROFILES="mediatek/filogic/bananapi_bpi-r3 ath79/generic/tplink_archer-c7-v4:too-big
 ramips/mt7621/glinet_gl-mt1300 ramips/mt7621/totolink_x5000r:too-big"
 script_case "resolve-profiles several profiles" 0 \
 	'matrix={"include":[{"profile":"bananapi-bpi-r3","target":"mediatek","subtarget":"filogic","device":"bananapi_bpi-r3","arch":"aarch64_cortex-a53","expect":"fits"},{"profile":"tplink-archer-c7-v4","target":"ath79","subtarget":"generic","device":"tplink_archer-c7-v4","arch":"mips_24kc","expect":"too-big"},{"profile":"glinet-gl-mt1300","target":"ramips","subtarget":"mt7621","device":"glinet_gl-mt1300","arch":"mipsel_24kc","expect":"fits"},{"profile":"totolink-x5000r","target":"ramips","subtarget":"mt7621","device":"totolink_x5000r","arch":"mipsel_24kc","expect":"too-big"}]}
-archs=aarch64_cortex-a53 mips_24kc mipsel_24kc' "${rp}" 25.12
+archs=aarch64_cortex-a53 mips_24kc mipsel_24kc
+count=4' "${rp}" 25.12
 HARNESS_PROFILES="ipq40xx/generic/glinet_gl-b1300 ipq40xx/generic/generic"
 script_case "resolve-profiles new architecture, generic of another target" 0 \
 	'matrix={"include":[{"profile":"glinet-gl-b1300","target":"ipq40xx","subtarget":"generic","device":"glinet_gl-b1300","arch":"arm_cortex-a7_neon-vfpv4","expect":"fits"},{"profile":"ipq40xx-generic-generic","target":"ipq40xx","subtarget":"generic","device":"generic","arch":"arm_cortex-a7_neon-vfpv4","expect":"fits"}]}
-archs=arm_cortex-a7_neon-vfpv4' "${rp}" 25.12
+archs=arm_cortex-a7_neon-vfpv4
+count=2' "${rp}" 25.12
 # The release directory is the latest non-rc release; the snapshot has a
 # profile the release lacks.
 HARNESS_PROFILES="mediatek/filogic/snapshot_only_board"
@@ -429,6 +445,7 @@ script_case "resolve-archs adds the architectures of the profiles, once" 0 \
 archs=x86_64 aarch64_generic mipsel_24kc mips_24kc aarch64_cortex-a53' "${ra}" 25.12
 HARNESS_ARCHS="@profiles"
 export HARNESS_ARCHS
+script_case "resolve-archs @profiles with no profile and no test architecture fails" 1 '' env HARNESS_PROFILES= "${ra}" 25.12
 script_case "resolve-archs only @profiles" 0 \
 	'matrix={"arch":["aarch64_cortex-a53","mipsel_24kc"]}
 archs=aarch64_cortex-a53 mipsel_24kc' "${ra}" 25.12

@@ -18,6 +18,7 @@
 #   HARNESS_ARCHS     tokens: @tests, @profiles or package architectures,
 #                     separated by spaces or newlines (default: "@tests @profiles")
 #   HARNESS_PROFILES  the profiles input, read only when @profiles is used
+#                     (empty: @profiles adds nothing)
 #   HARNESS_TARGETS   the QEMU test targets @tests stands for (default: all
 #                     targets of targets.yml with an image for the line, as
 #                     scripts/matrix.sh)

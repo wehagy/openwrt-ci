@@ -60,7 +60,7 @@ on:
         description: >-
           Image profiles whose architectures @profiles adds (same format as
           the profiles input of images.yml, checked against profiles.json of
-          the line). Empty: the profile of the base's own CI.
+          the line). Empty: none.
         type: string
         required: false
         default: ""

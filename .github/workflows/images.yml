@@ -27,8 +27,8 @@ on:
           <target>/<subtarget>/<profile> (e.g. mediatek/filogic/bananapi_bpi-r3),
           optionally followed by :too-big for an image known not to fit the
           flash. Checked against profiles.json of the line; the package
-          architecture is read from it. Empty: the profile of the base's own
-          CI (profiles in harness/images.yml).
+          architecture is read from it. Empty: no image is built (the image
+          jobs are skipped and the summary says so).
         type: string
         required: false
         default: ""
@@ -71,6 +71,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      count: ${{ steps.matrix.outputs.count }}
     steps:
       # The harness (scripts/, harness/, docker/) is checked out explicitly: a
       # reusable workflow runs in the caller's context, so a plain checkout
@@ -128,6 +129,13 @@ jobs:
           HARNESS_PROFILES: ${{ inputs.profiles }}
         run: ci-base/scripts/resolve-profiles.sh "${LINE}" | tee -a "${GITHUB_OUTPUT}"
 
+      # No profile, no image: say so where it can be read.
+      - name: No profile given
+        if: ${{ steps.matrix.outputs.count == '0' }}
+        run: |
+          echo "::notice::images: no profile given, no image is built"
+          echo "### images: no profile given, no image is built" >>"${GITHUB_STEP_SUMMARY}"
+
       # Fail here, not later in the image job's fromJSON, if no matrix was set.
       - name: Check matrix
         env:
@@ -137,6 +145,7 @@ jobs:
           printf 'matrix=%s\n' "${MATRIX}"
 
   image:
+    if: ${{ needs.profiles.outputs.count != '0' }}
     needs: profiles
     name: ${{ inputs.line }} ${{ matrix.profile }}
     runs-on: ubuntu-26.04

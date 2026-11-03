@@ -57,7 +57,7 @@ on:
         type: string
         default: ""
       profiles:
-        description: Image profiles, <target>/<subtarget>/<profile>[:too-big] (default - x86/64/generic of harness/images.yml)
+        description: Image profiles, <target>/<subtarget>/<profile>[:too-big] (default - x86/64/generic)
         type: string
         default: ""
       packages:
@@ -83,7 +83,7 @@ jobs:
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
       feed_repository: ${{ inputs.feed_repository }}
       feed_ref: ${{ inputs.feed_ref }}
-      profiles: ${{ inputs.profiles }}
+      profiles: ${{ inputs.profiles || 'x86/64/generic' }}
       targets: ${{ inputs.targets }}
 
   build-main:
@@ -99,7 +99,7 @@ jobs:
       refresh_sdk: ${{ inputs.refresh_sdk == true }}
       feed_repository: ${{ inputs.feed_repository }}
       feed_ref: ${{ inputs.feed_ref }}
-      profiles: ${{ inputs.profiles }}
+      profiles: ${{ inputs.profiles || 'x86/64/generic' }}
       targets: ${{ inputs.targets }}
 
   test-25-12:
@@ -141,7 +141,7 @@ jobs:
       ci_ref: ${{ github.sha }}
       line: "25.12"
       package: ${{ inputs.package || 'chrony' }}
-      profiles: ${{ inputs.profiles }}
+      profiles: ${{ inputs.profiles || 'x86/64/generic' }}
       packages: ${{ inputs.packages || '-dnsmasq dnsmasq-full' }}
 
   image-main:
@@ -152,7 +152,7 @@ jobs:
       ci_ref: ${{ github.sha }}
       line: main
       package: ${{ inputs.package || 'chrony' }}
-      profiles: ${{ inputs.profiles }}
+      profiles: ${{ inputs.profiles || 'x86/64/generic' }}
       packages: ${{ inputs.packages || '-dnsmasq dnsmasq-full' }}
 
   # What the callers of build.yml read: the feed outputs of the builds.

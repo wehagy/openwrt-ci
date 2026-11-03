@@ -30,9 +30,9 @@ which calls the workflows below.
     directory, e.g. `r37969-5799d2da76`). Both lines also have the build
     keys (`sdk_tag_suffix`, `sdk_max_age_days`, `packages_branch`,
     `imagebuilder_tag_suffix`).
-  - `images.yml`: the globs of the files kept as artifacts and the default of
-    the `profiles` input (the profile the base's own CI builds). The image
-    choices of a caller are inputs of `images.yml`, not data of this repository.
+  - `images.yml`: the globs of the files kept as artifacts. The image
+    choices of a caller (profiles, packages) are inputs of `images.yml`, not
+    data of this repository; the base has no default profile.
   - `targets.yml`: per-QEMU-target data (`x86-64`, `armsr-armv8`, `malta-le`,
     `malta-be`) and the image name per line.
   - `selftests/`: pytest tests of the harness helpers (no VM).
@@ -371,7 +371,7 @@ rebuilt.
 |------------|----------------------------------------------------------|-------------------------------------------------------|
 | `archs`    | package architectures to build, separated by spaces or newlines | `@tests`, `@profiles`, or a name `[a-z0-9][a-z0-9_-]*` (<= 64 chars); 1 to 16 after expansion; default `@tests @profiles` |
 | `targets`  | QEMU test targets whose architectures `@tests` stands for | same value as the `targets` input of `test.yml`; empty: all |
-| `profiles` | image profiles whose architectures `@profiles` adds       | same value as the `profiles` input of `images.yml` (see there); empty: the default profile of `harness/images.yml` |
+| `profiles` | image profiles whose architectures `@profiles` adds       | same value as the `profiles` input of `images.yml` (see there); empty: none |
 
 - `@tests` is the `arch` of every target of `harness/targets.yml` selected by
   `targets` (by default all: `x86_64`,
@@ -510,7 +510,7 @@ the caller (in [wehagy/openwrt-ci-packages](https://github.com/wehagy/openwrt-ci
 | Input      | Meaning                                                 | Accepted                                              |
 |------------|---------------------------------------------------------|-------------------------------------------------------|
 | `package`  | package built by `build.yml`, installed in every image  | as in `build.yml`; empty: images without a package of their own (no `apk-*` artifact is read, no manifest line is checked) |
-| `profiles` | the images to build, separated by spaces or newlines    | `<target>/<subtarget>/<profile>[:too-big]`; target and subtarget `[a-z0-9]+` (<= 32), profile `[A-Za-z0-9_-]+` (<= 64); 1 to 16; empty: `profiles` of `harness/images.yml` (`x86/64/generic`, the base's own CI) |
+| `profiles` | the images to build, separated by spaces or newlines    | `<target>/<subtarget>/<profile>[:too-big]`; target and subtarget `[a-z0-9]+` (<= 32), profile `[A-Za-z0-9_-]+` (<= 64); 1 to 16; empty: no image (the image jobs are skipped; the `profiles` job says `images: no profile given, no image is built` in its summary) |
 | `packages` | packages added to every image next to the built one     | `<name>` adds, `-<name>` removes (Image Builder `PACKAGES` syntax, e.g. `-dnsmasq dnsmasq-full`); name as `package`; at most 100 and 2048 characters; empty: none |
 
 - `:too-big` after a profile is the expectation described below (the image is
@@ -638,7 +638,7 @@ Dispatch inputs: `refresh_sdk` (boolean, passed to `build.yml`) and `lines`
 (default `chrony`), `feed_repository` and `feed_ref` (passed to `build.yml`,
 see "Feed source"); `stages` (`all`, or `build` to skip the test and image
 jobs); `profiles` and `packages` (the `profiles` and `packages` inputs; empty
-profiles: `x86/64/generic` of `harness/images.yml`; empty packages: the CI uses
+profiles: `x86/64/generic`, passed to `build.yml` and `images.yml` like any caller; empty packages: the CI uses
 `-dnsmasq dnsmasq-full`, which exercises the removal syntax and the manifest
 check). Each build job has `packages: write`. The job `feed-report` prints the
 feed outputs (`feed_repository`, `feed_ref`, `feed_sha`) of the builds that

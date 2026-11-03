@@ -1,17 +1,10 @@
 # Responsibility: the data of the image workflow (images.yml) that belongs to
-# the base: the files kept as artifacts and the profile its own CI builds. The
-# images a caller wants (profiles, extra packages) are inputs of images.yml
-# and live in the calling repository, not here.
+# the base: the files kept as artifacts. The images a caller wants (profiles,
+# extra packages) are inputs of images.yml and live in the calling repository;
+# the base has no default profile (a caller that gives none gets no image).
 #
 # Keys:
 #   image_globs  file name globs of the images kept as artifacts (the
 #                firmware to flash; rootfs/kernel parts are left out)
-#   profiles     the default of the `profiles` input: used when the caller
-#                gives none, i.e. by the base's own CI. Profile tokens are
-#                <target>/<subtarget>/<profile>, optionally followed by
-#                :too-big for an image known not to fit the flash (the job is
-#                green only when the Image Builder reports "too big").
 
 image_globs: "*sysupgrade* *factory* *combined* *sdcard*"
-
-profiles: x86/64/generic

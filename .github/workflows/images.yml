@@ -1,9 +1,19 @@
-# Reusable workflow: build firmware images with the official OpenWrt
-# ImageBuilder, one job per profile of the `profiles` input, with the package
+# Reusable workflow: build firmware images with the OpenWrt ImageBuilder, one
+# job per profile of the `profiles` input, with the package
 # built by build.yml (artifact apk-<package>-<line>-<arch>) installed in each
 # when there is one. The image choices (profiles, extra packages) belong to
 # the caller; the profiles are checked against the official profiles.json of
 # the line before any job starts.
+#
+# The ImageBuilder comes from the harness image ghcr.io/<owner>/openwrt-
+# imagebuilder:<target>-<subtarget>-<suffix> (a copy of the official release
+# container, or the official snapshot container with setup.sh already run).
+# This workflow only READS it: the daily refresh (refresh-images.yml,
+# scheduled by the caller) creates and updates it, so no job here has
+# `packages: write` and none downloads an ImageBuilder. A missing image fails
+# the job with the command that refreshes it by hand; an image that differs
+# from its upstream for more than the line's image_grace_days only raises a
+# warning annotation.
 name: images
 
 on:
@@ -40,6 +50,14 @@ on:
         type: string
         required: false
         default: ""
+      ib_container:
+        description: >-
+          GHCR repository of the harness ImageBuilder image,
+          ghcr.io/<owner>/<name> (lowercase). Published by the daily refresh
+          (refresh-images.yml), read anonymously by the image jobs.
+        type: string
+        required: false
+        default: ghcr.io/wehagy/openwrt-imagebuilder
       ci_ref:
         description: >-
           Ref (branch, tag or commit) of wehagy/openwrt-ci the scripts, harness data
@@ -59,9 +77,12 @@ defaults:
   run:
     shell: bash
 
-# The repository the harness is checked out from (first step of every job).
+# The repository the harness is checked out from (first step of every job), and
+# the one place that names the ImageBuilder image repository (the `ib_container`
+# input; scripts/resolve-image.sh lowercases and validates it).
 env:
   HARNESS_CI_REPOSITORY: wehagy/openwrt-ci
+  HARNESS_IB_CONTAINER: ${{ inputs.ib_container }}
 
 jobs:
   # The profiles come from the `profiles` input, resolved against profiles.json.
@@ -94,10 +115,10 @@ jobs:
       - name: Outcome check self-test
         run: ci-base/scripts/image-outcome-selftest.sh
 
-      # A fake setup.sh: the retry of a sha256 mismatch of the Image Builder
-      # archive (snapshot published file by file) is bounded by attempts and by time, and fail-closed.
-      - name: Image Builder setup self-test
-        run: ci-base/scripts/ib-setup-selftest.sh
+      # The freshness rule of the image the jobs read (the warning of a stale
+      # image) and the readers of its labels, with a stub curl.
+      - name: Image freshness self-test
+        run: ci-base/scripts/image-decide-selftest.sh
 
       # Fixed text: the pinned package list, the apk metadata, the check that
       # the image holds the local apk and the FormatPackages repair.
@@ -154,8 +175,6 @@ jobs:
     needs: profiles
     name: ${{ inputs.line }} ${{ matrix.profile }}
     runs-on: ubuntu-26.04
-    # 5400 s. scripts/ib-setup.sh retries only within HARNESS_IB_SETUP_BUDGET
-    # (3000 s by default), so a retry never runs into this timeout.
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -212,7 +231,11 @@ jobs:
           version=$(apk_version "${apk}" "${HARNESS_PACKAGE}")
           echo "HARNESS_PACKAGE_VERSION=${version}" | tee -a "${GITHUB_ENV}"
 
+      # Reads the labels anonymously first: a missing or private image fails
+      # with the manual refresh command, a stale one only warns.
       - name: Pull the ImageBuilder image
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: ci-base/scripts/pull-imagebuilder.sh "${HARNESS_IB_IMAGE}" | tee -a "${GITHUB_ENV}"
 
       # The container user (uid 1000) is not the runner user, so the output
@@ -222,7 +245,7 @@ jobs:
           mkdir -m 0777 "${IB_OUT}"
           docker run --rm \
             --env HARNESS_PROFILE --env HARNESS_PACKAGES --env HARNESS_PACKAGE \
-            --env HARNESS_TARGET_PATH --env HARNESS_IB_SETUP \
+            --env HARNESS_TARGET_PATH \
             --volume "${GITHUB_WORKSPACE}/ci-base/scripts:/harness/scripts:ro" \
             --volume "${APK_IN}:/harness/in:ro" \
             --volume "${IB_OUT}:/harness/out" \

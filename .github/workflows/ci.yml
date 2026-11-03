@@ -1,7 +1,8 @@
 # Tests the harness itself: builds a sample package (chrony) for both lines,
 # tests each build in QEMU and builds its images, on every push to a feature
-# branch. Can also be started by hand to force the SDK images to be rebuilt
-# (refresh_sdk) and to build only one line. Packages of their own live in
+# branch. Can also be started by hand to build only one line. It only READS the
+# SDK and ImageBuilder images of GHCR; the daily refresh of the caller
+# (refresh-images.yml) writes them. Packages of their own live in
 # wehagy/openwrt-ci-packages, which calls the same workflows.
 #
 # test-* also exercise the caller side of test.yml against this repository:
@@ -22,10 +23,6 @@ on:
     branches: ["feat/**"]
   workflow_dispatch:
     inputs:
-      refresh_sdk:
-        description: Rebuild the SDK images of the selected lines even when fresh
-        type: boolean
-        default: false
       lines:
         description: Lines to build
         type: choice
@@ -69,18 +66,13 @@ permissions:
   contents: read
 
 jobs:
-  # build.yml pushes the SDK images to GHCR, hence packages: write.
   build-25-12:
     if: ${{ inputs.lines != 'main' }}
-    permissions:
-      contents: read
-      packages: write
     uses: ./.github/workflows/build.yml
     with:
       ci_ref: ${{ github.sha }}
       line: "25.12"
       package: ${{ inputs.package || 'chrony' }}
-      refresh_sdk: ${{ inputs.refresh_sdk == true }}
       feed_repository: ${{ inputs.feed_repository }}
       feed_ref: ${{ inputs.feed_ref }}
       profiles: ${{ inputs.profiles || 'x86/64/generic' }}
@@ -88,15 +80,11 @@ jobs:
 
   build-main:
     if: ${{ inputs.lines != '25.12' }}
-    permissions:
-      contents: read
-      packages: write
     uses: ./.github/workflows/build.yml
     with:
       ci_ref: ${{ github.sha }}
       line: main
       package: ${{ inputs.package || 'chrony' }}
-      refresh_sdk: ${{ inputs.refresh_sdk == true }}
       feed_repository: ${{ inputs.feed_repository }}
       feed_ref: ${{ inputs.feed_ref }}
       profiles: ${{ inputs.profiles || 'x86/64/generic' }}

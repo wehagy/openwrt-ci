@@ -7,11 +7,14 @@
 # value read from the YAML files is valid, so the output is safe for
 # $GITHUB_ENV.
 #
-# The ImageBuilder tag is <target>-<subtarget>-<release> when the line's
-# release_source is "releases" (the release image embeds the ImageBuilder),
-# <target>-<subtarget>-<imagebuilder_tag_suffix> for "snapshot", a tag that
-# ships only setup.sh (HARNESS_IB_SETUP=true: the ImageBuilder is downloaded when
-# the container runs).
+# The ImageBuilder image is the harness image on GHCR,
+# <HARNESS_IB_CONTAINER>:<target>-<subtarget>-<imagebuilder_tag_suffix>, which
+# the daily refresh (refresh-images.yml) keeps up to date: a copy of the
+# official release container for a "releases" line, the official snapshot
+# container with setup.sh already run for a "snapshot" line. The job only reads
+# it. HARNESS_IB_RELEASE is the latest release of a "releases" line now (empty
+# for a snapshot), which scripts/image-stale-check.sh compares with the
+# release the image holds.
 #
 # HARNESS_EXPECT is "too-big" for a profile given with the :too-big suffix
 # (its image is known not to fit the flash), otherwise "fits".
@@ -32,8 +35,9 @@
 #   HARNESS_IMAGE_PACKAGES  the `packages` input (default: empty)
 #   HARNESS_DIR          directory with lines.yml and images.yml
 #                        (default: <repo>/harness)
-#   HARNESS_IB_CONTAINER ImageBuilder image repository
-#                        (default: docker.io/openwrt/imagebuilder)
+#   HARNESS_IB_CONTAINER harness ImageBuilder image repository, required; set
+#                        once, in .github/workflows/images.yml
+#                        (ghcr.io/<owner>/openwrt-imagebuilder)
 
 set -eu
 
@@ -69,7 +73,10 @@ image_packages=${HARNESS_IMAGE_PACKAGES:-}
 harness_dir=${HARNESS_DIR:-${script_dir}/../harness}
 lines_file=${harness_dir}/lines.yml
 images_file=${harness_dir}/images.yml
-container=${HARNESS_IB_CONTAINER:-docker.io/openwrt/imagebuilder}
+# Registry names are lowercase; the owner may come from github.repository_owner.
+container=$(printf '%s\n' "${HARNESS_IB_CONTAINER:?HARNESS_IB_CONTAINER is required}" | tr '[:upper:]' '[:lower:]') ||
+	die "cannot normalise the Image Builder container"
+check_sdk_container "${container}"
 
 line_key='.lines[strenv(LINE)]'
 image_globs=$(yq_get "${images_file}" '.image_globs')
@@ -90,16 +97,17 @@ case "${release_source}" in
 releases)
 	index_url=$(yq_get "${lines_file}" "${line_key}.releases_index_url")
 	release_regex=$(yq_get "${lines_file}" "${line_key}.release_regex")
-	tag_suffix=$(latest_release "${index_url}" "${release_regex}")
-	setup=false
+	release=$(latest_release "${index_url}" "${release_regex}")
+	check_charset "release" "${release}" '[!A-Za-z0-9._-]'
 	;;
-snapshot)
-	tag_suffix=$(yq_get "${lines_file}" "${line_key}.imagebuilder_tag_suffix")
-	setup=true
-	;;
+snapshot) release= ;;
 *) die "unsupported release_source of line ${LINE}" ;;
 esac
-check_charset "ImageBuilder tag suffix" "${tag_suffix}" '[!A-Za-z0-9._-]'
+tag_suffix=$(yq_get "${lines_file}" "${line_key}.imagebuilder_tag_suffix")
+grace_days=$(yq_get "${lines_file}" "${line_key}.image_grace_days")
+check_grace_days "${grace_days}"
+ib_image_tag=$(ib_tag "${target}" "${subtarget}" "${tag_suffix}")
+check_sdk_tag "${ib_image_tag}"
 
 printf 'HARNESS_LINE=%s\n' "${LINE}"
 printf 'HARNESS_PROFILE_ID=%s\n' "${PROFILE_ID}"
@@ -112,7 +120,8 @@ printf 'HARNESS_IMAGE_PACKAGES=%s\n' "${packages_line}"
 printf 'HARNESS_PACKAGES=%s\n' "${all_packages_line}"
 printf 'HARNESS_ARTIFACT=images-%s-%s-%s\n' "${package:-nopkg}" "${LINE}" "${PROFILE_ID}"
 printf 'HARNESS_TARGET_PATH=%s/%s\n' "${target}" "${subtarget}"
-printf 'HARNESS_IB_IMAGE=%s:%s-%s-%s\n' "${container}" "${target}" "${subtarget}" "${tag_suffix}"
-printf 'HARNESS_IB_SETUP=%s\n' "${setup}"
+printf 'HARNESS_IB_IMAGE=%s:%s\n' "${container}" "${ib_image_tag}"
+printf 'HARNESS_IB_RELEASE=%s\n' "${release}"
+printf 'HARNESS_IB_GRACE_DAYS=%s\n' "${grace_days}"
 printf 'HARNESS_IMAGE_GLOBS=%s\n' "${image_globs}"
 printf 'HARNESS_EXPECT=%s\n' "${expect}"

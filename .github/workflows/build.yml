@@ -6,13 +6,14 @@
 #
 # The SDK comes from the harness image ghcr.io/<owner>/openwrt-sdk:<arch>-<tag>,
 # derived from the official snapshot SDK container with setup.sh already run
-# (the SDK download from the OpenWrt mirror takes ~14 min). The `sdk-image` job
-# rebuilds it when it is missing, older than the line's sdk_max_age_days or
-# refresh_sdk is set; otherwise it is reused. The `sdk` job pins the image by
-# digest, so the build never reads an image another run replaces. The caller
-# must grant `packages: write` to the job that calls this workflow. A rebuild
-# pushes with the CALLER's GITHUB_TOKEN, so the package needs "Manage Actions
-# access" for the calling repository (README, "SDK image access").
+# (the SDK download from the OpenWrt mirror takes ~14 min). This workflow only
+# READS it: the daily refresh (refresh-images.yml, scheduled by the caller)
+# creates and updates it, so no job here has `packages: write` and none
+# rebuilds an image by age. A missing image fails the `sdk` job with the
+# command that refreshes it by hand; an image that differs from its upstream
+# for more than the line's image_grace_days only raises a warning annotation.
+# The `sdk` job pins the image by digest, so the build never reads an image
+# the refresh replaces meanwhile.
 name: build
 
 on:
@@ -26,15 +27,11 @@ on:
         description: Package name to build (a directory of openwrt/packages)
         type: string
         required: true
-      refresh_sdk:
-        description: Rebuild the SDK images of the line even when they are fresh
-        type: boolean
-        required: false
-        default: false
       sdk_container:
         description: >-
           GHCR repository of the harness SDK image, ghcr.io/<owner>/<name>
-          (lowercase). Published by sdk-image, read anonymously by sdk.
+          (lowercase). Published by the daily refresh (refresh-images.yml),
+          read anonymously by sdk.
         type: string
         required: false
         default: ghcr.io/wehagy/openwrt-sdk
@@ -43,8 +40,9 @@ on:
           Package architectures to build, separated by spaces or newlines:
           literal names (e.g. x86_64), @tests (the architectures of the QEMU
           test targets of harness/targets.yml) and @profiles (the
-          architectures of the profiles input). A new architecture gets its
-          SDK image from the sdk-image job on first use.
+          architectures of the profiles input). The SDK image of every
+          architecture must exist (the daily refresh creates it; list the
+          architecture in the caller of refresh-images.yml before using it).
         type: string
         required: false
         default: "@tests @profiles"
@@ -103,7 +101,7 @@ permissions:
   contents: read
 
 # The one place that names the SDK image repository (the `sdk_container` input,
-# with its default): published by `sdk-image`, read by `sdk` and passed to
+# with its default): published by the daily refresh, read by `sdk` and passed to
 # openwrt/gh-action-sdk as CONTAINER (scripts/resolve-sdk.sh lowercases and
 # validates it, and has no default of its own). HARNESS_CI_REPOSITORY is the
 # repository the harness is checked out from (first step of every job).
@@ -116,7 +114,7 @@ jobs:
   # run: the architecture jobs below check out that SHA, so a branch that moves
   # during the run cannot give two architectures different trees. The outputs
   # are the workflow's feed_repository, feed_ref and feed_sha. It runs before
-  # sdk-image so that an invalid input fails before any image is rebuilt.
+  # sdk so that an invalid input fails before any architecture job starts.
   feed:
     name: feed ${{ inputs.line }}
     runs-on: ubuntu-26.04
@@ -149,11 +147,16 @@ jobs:
       - name: Feed source self-test
         run: ci-base/scripts/feed-inputs-selftest.sh
 
+      # The freshness rule of the image the sdk job reads (the warning of a
+      # stale image) and the readers of its labels, with a stub curl.
+      - name: Image freshness self-test
+        run: ci-base/scripts/image-decide-selftest.sh
+
       - name: Image inputs self-test
         run: ci-base/scripts/image-inputs-selftest.sh
 
-      # The architecture matrix of sdk-image and sdk. A profile that does not
-      # exist fails here, before an SDK image is rebuilt.
+      # The architecture matrix of sdk. A profile that does not exist fails
+      # here, before any architecture job.
       - name: Resolve the architectures
         id: archs
         env:
@@ -192,71 +195,8 @@ jobs:
           ci-base/scripts/feed-record.sh packages-feed | tee -a "${GITHUB_OUTPUT}"
           ci-base/scripts/feed-record.sh --summary packages-feed | tee -a "${GITHUB_STEP_SUMMARY}"
 
-  # No `concurrency` group: GitHub keeps one running and one pending job per
-  # group and cancels the older pending one, which would cancel the build of a
-  # run whenever 3 runs (or the packages of the next slice) need the same
-  # rebuild. Instead, scripts/sdk-image-ensure.sh decides again after its
-  # local build, just before the push, and discards the build if another run
-  # pushed a fresh image meanwhile; it keeps the superseded image as
-  # <tag>-prev, so an in-flight build that pinned it keeps working.
-  sdk-image:
-    needs: feed
-    name: sdk-image ${{ inputs.line }} ${{ matrix.arch }}
-    runs-on: ubuntu-26.04
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.feed.outputs.archs) }}
-    defaults:
-      run:
-        shell: bash # adds pipefail
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GITHUB_TOKEN: ${{ github.token }}
-      HARNESS_REFRESH_SDK: ${{ inputs.refresh_sdk }}
-    steps:
-      # The harness (scripts/, harness/, docker/) is checked out explicitly: a
-      # reusable workflow runs in the caller's context, so a plain checkout
-      # would fetch the calling repository. Everything runs from ci-base/.
-      - name: Check out the harness
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: ${{ env.HARNESS_CI_REPOSITORY }}
-          ref: ${{ inputs.ci_ref }}
-          path: ci-base
-          persist-credentials: false
-
-      - name: Report revisions
-        env:
-          HARNESS_CI_REF: ${{ inputs.ci_ref }}
-        run: ci-base/scripts/report-revisions.sh
-
-      - name: Age rule self-test
-        run: ci-base/scripts/sdk-age-selftest.sh
-
-      # A stub gh: a 404 on the delete of the superseded version is success
-      # only when a fresh listing no longer has it; every other error fails.
-      - name: Version prune self-test
-        run: ci-base/scripts/ghcr-versions-selftest.sh
-
-      # Validates the inputs; the output is written to $GITHUB_ENV only when
-      # the script succeeded.
-      - name: Resolve line and arch
-        env:
-          LINE: ${{ inputs.line }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          resolved=$(ci-base/scripts/resolve-sdk.sh "${LINE}" "${ARCH}")
-          echo "${resolved}" | tee -a "${GITHUB_ENV}"
-
-      - name: Reuse or rebuild the SDK image
-        run: ci-base/scripts/sdk-image-ensure.sh
-
   sdk:
-    needs: [feed, sdk-image]
+    needs: feed
     name: ${{ inputs.line }} ${{ matrix.arch }}
     runs-on: ubuntu-26.04
     timeout-minutes: 45
@@ -312,9 +252,11 @@ jobs:
           persist-credentials: false
 
       # Pins the SDK image: reads it anonymously, as the build below pulls
-      # it, fails if it is private, and records <tag>@<digest> (HARNESS_SDK_PIN).
-      # The age is not checked again: sdk-image decided it for this run.
+      # it, fails with the manual refresh command if it is missing or private,
+      # warns if it is stale, and records <tag>@<digest> (HARNESS_SDK_PIN).
       - name: Pin the SDK image
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           info=$(ci-base/scripts/sdk-image-info.sh)
           echo "${info}" | tee -a "${GITHUB_ENV}"

@@ -71,7 +71,6 @@ printf -- '- profile: %s\n' "${profile}"
 printf -- '- ImageBuilder image: %s (%s)\n' "${ib_image}" "${HARNESS_IB_DIGEST:-not pulled}"
 printf -- '- ImageBuilder image size: %s bytes, pulled in %s s\n' \
 	"${HARNESS_IB_SIZE_BYTES:-unknown}" "${HARNESS_IB_PULL_SECONDS:-unknown}"
-file_item "ImageBuilder download in the container (setup.sh)" "${ib_dir}/setup-seconds" s
 file_item "make image duration" "${ib_dir}/make-seconds" s
 printf -- '- target: %s\n' "${HARNESS_TARGET_PATH:-unknown}"
 if [ -n "${package}" ]; then

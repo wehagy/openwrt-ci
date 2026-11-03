@@ -638,9 +638,8 @@ Dispatch inputs: `refresh_sdk` (boolean, passed to `build.yml`) and `lines`
 (default `chrony`), `feed_repository` and `feed_ref` (passed to `build.yml`,
 see "Feed source"); `stages` (`all`, or `build` to skip the test and image
 jobs); `profiles` and `packages` (the `profiles` and `packages` inputs; empty
-profiles: `x86/64/generic`, passed to `build.yml` and `images.yml` like any caller; empty packages: the CI uses
-`-dnsmasq dnsmasq-full`, which exercises the removal syntax and the manifest
-check). Each build job has `packages: write`. The job `feed-report` prints the
+profiles: `x86/64/generic`, passed to `build.yml` and `images.yml` like any caller; empty packages: none, so the image holds the Image Builder's default packages
+and the package under test). Each build job has `packages: write`. The job `feed-report` prints the
 feed outputs (`feed_repository`, `feed_ref`, `feed_sha`) of the builds that
 succeeded.
 

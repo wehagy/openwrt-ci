@@ -61,7 +61,7 @@ on:
         type: string
         default: ""
       packages:
-        description: Packages added to the images, -name removes (default - none; the CI uses "-dnsmasq dnsmasq-full")
+        description: Packages added to the images, -name removes (default - none)
         type: string
         default: ""
 
@@ -142,7 +142,7 @@ jobs:
       line: "25.12"
       package: ${{ inputs.package || 'chrony' }}
       profiles: ${{ inputs.profiles || 'x86/64/generic' }}
-      packages: ${{ inputs.packages || '-dnsmasq dnsmasq-full' }}
+      packages: ${{ inputs.packages }}
 
   image-main:
     if: ${{ inputs.stages != 'build' }}
@@ -153,7 +153,7 @@ jobs:
       line: main
       package: ${{ inputs.package || 'chrony' }}
       profiles: ${{ inputs.profiles || 'x86/64/generic' }}
-      packages: ${{ inputs.packages || '-dnsmasq dnsmasq-full' }}
+      packages: ${{ inputs.packages }}
 
   # What the callers of build.yml read: the feed outputs of the builds.
   feed-report:

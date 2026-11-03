@@ -886,6 +886,12 @@ plan_has "refresh-plan Image Builder images" ib_matrix \
 	"25.12:mediatek/filogic 25.12:x86/64 main:mediatek/filogic main:x86/64"
 out_has "refresh-plan two lines" "sdk_count=4"
 out_has "refresh-plan two lines" "ib_count=4"
+# The matrix is the unique, sorted set (arch first), whatever the order of the
+# lines: a duplicate would be two jobs pushing the same tag.
+script_case "refresh-plan lines in the other order" 0 ANY env HARNESS_REFRESH_LINES="main 25.12" \
+	HARNESS_PROFILES="x86/64/generic mediatek/filogic/bananapi_bpi-r3" HARNESS_TARGETS=x86-64 "${rpl}"
+plan_has "refresh-plan SDK matrix is sorted and unique" sdk_matrix '.include | map(.line + ":" + .arch) | join(" ")' \
+	"25.12:aarch64_cortex-a53 main:aarch64_cortex-a53 25.12:x86_64 main:x86_64"
 script_case "refresh-plan without profiles has no Image Builder image" 0 ANY env HARNESS_REFRESH_LINES=main \
 	HARNESS_PROFILES= HARNESS_TARGETS=x86-64 "${rpl}"
 out_has "refresh-plan without profiles" "sdk_count=1"

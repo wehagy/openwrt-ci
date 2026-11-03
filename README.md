@@ -361,7 +361,7 @@ The caller must grant `packages: write` to the job that calls `build.yml`
     run` and is not an error only when a fresh listing of the package versions
     no longer has the version (GitHub answers 404 for some requests the token
     may not make; the listing needs the same access as the delete, so a version
-    it still shows was not deleted by anyone and the job fails); every other
+    it still shows was not deleted by anyone and the job fails: seen in run 41629411610, where version 1492410297 stayed listed after the 404, as did 1485456882 after the 404 of run 41617228364, so the delete does not work with that token); every other
     error (401, 403, 409, 500, ...) fails the job. `scripts/ghcr-versions-selftest.sh` (step "Version prune
     self-test" of the `sdk-image` job) runs `lib/ghcr-versions.sh` against a
     stub `gh`.

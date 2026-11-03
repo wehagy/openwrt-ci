@@ -48,7 +48,7 @@ ghcr_delete_version() {
 		fi
 		cat "${gdv_err}" >&2
 		rm -f "${gdv_err}"
-		die "HTTP 404 on the delete of the version $2, which is still listed"
+		die "HTTP 404 on the delete of the version $2, which is still listed: the token can read the package but not delete the version (check the role of the repository in the package settings, Manage Actions access)"
 	fi
 	cat "${gdv_err}" >&2
 	rm -f "${gdv_err}"

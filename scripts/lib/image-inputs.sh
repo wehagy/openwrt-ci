@@ -169,3 +169,24 @@ check_package_arch() {
 	esac
 	[ "${#1}" -le 64 ] || die "invalid architecture (longer than 64 chars)"
 }
+
+# ---------------------------------------------------------------------------
+# Image Builder image names
+# ---------------------------------------------------------------------------
+
+# Print the tag of an Image Builder image: <target>-<subtarget>-<suffix>. It is
+# the tag of the official snapshot container, and the tag of the harness image
+# on GHCR for the line, whether that image is built from the snapshot container
+# or is a copy of the release container. One place for the refresh, which
+# writes the image, and for the image jobs, which read it.
+#
+# Arguments:
+#   $1  target
+#   $2  subtarget
+#   $3  imagebuilder_tag_suffix of the line (harness/lines.yml)
+ib_tag() {
+	check_charset "target" "$1" '[!a-z0-9]'
+	check_charset "subtarget" "$2" '[!a-z0-9]'
+	check_charset "ImageBuilder tag suffix" "$3" '[!A-Za-z0-9._-]'
+	printf '%s-%s-%s\n' "$1" "$2" "$3"
+}

@@ -161,18 +161,18 @@ check_sdk_tag() {
 	[ "${#1}" -le 128 ] || die "invalid SDK image tag (longer than 128 chars)"
 }
 
-# Abort unless the argument is a maximum image age in whole days, 1 to 365.
+# Abort unless the argument is a grace period in whole days, 1 to 365.
 # The value is never echoed (see check_package_name).
 #
 # Arguments:
 #   $1  days
-check_max_age_days() {
+check_grace_days() {
 	case "$1" in
-	*[!0-9]* | '') die "invalid SDK max age (allowed: whole days, 1-365)" ;;
+	*[!0-9]* | '') die "invalid grace period (allowed: whole days, 1-365)" ;;
 	*) ;;
 	esac
 	{ [ "${#1}" -le 3 ] && [ "$1" -ge 1 ] && [ "$1" -le 365 ]; } ||
-		die "invalid SDK max age (allowed: whole days, 1-365)"
+		die "invalid grace period (allowed: whole days, 1-365)"
 }
 
 # Abort unless the argument is true or false. The value is never echoed.

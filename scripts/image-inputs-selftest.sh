@@ -346,6 +346,8 @@ printf '{"target":"noobj/generic","arch_packages":"x86_64","profiles":[]}\n' >"$
 cat >"${fixtures}/lines.yml" <<EOF
 lines:
   "25.12":
+    sdk_tag_suffix: openwrt-25.12
+    image_grace_days: 1
     imagebuilder_tag_suffix: openwrt-25.12
     release_source: releases
     releases_index_url: file://${mirror}/releases/index.html
@@ -353,6 +355,8 @@ lines:
     image_base_url: file://${mirror}/releases/{release}/targets/{path}
     feed_base_url: file://${mirror}/releases/{release}/packages/{arch}/packages
   main:
+    sdk_tag_suffix: main
+    image_grace_days: 1
     imagebuilder_tag_suffix: main
     release_source: snapshot
     snapshot_version_url: file://${mirror}/snapshots/targets/{path}/version.buildinfo
@@ -405,6 +409,8 @@ targets:
       "25.12": openwrt-{release}-malta-be-vmlinux-initramfs.elf
 EOF
 export HARNESS_DIR="${fixtures}"
+export HARNESS_IB_CONTAINER=ghcr.io/test/openwrt-imagebuilder
+export HARNESS_SDK_CONTAINER=ghcr.io/test/openwrt-sdk
 
 rp=${script_dir}/resolve-profiles.sh
 ra=${script_dir}/resolve-archs.sh
@@ -673,14 +679,15 @@ HARNESS_IMAGE_PACKAGES=-dnsmasq dnsmasq-full
 HARNESS_PACKAGES=-dnsmasq dnsmasq-full netbird
 HARNESS_ARTIFACT=images-netbird-25.12-glinet-gl-mt1300
 HARNESS_TARGET_PATH=ramips/mt7621
-HARNESS_IB_IMAGE=docker.io/openwrt/imagebuilder:ramips-mt7621-25.12.6
-HARNESS_IB_SETUP=false
+HARNESS_IB_IMAGE=ghcr.io/test/openwrt-imagebuilder:ramips-mt7621-openwrt-25.12
+HARNESS_IB_RELEASE=25.12.6
+HARNESS_IB_GRACE_DAYS=1
 HARNESS_IMAGE_GLOBS=*sysupgrade* *factory*
 HARNESS_EXPECT=fits' "${ri}" 25.12 glinet-gl-mt1300 netbird
 script_case "resolve-image without a package" 0 ANY "${ri}" main glinet-gl-mt1300 ''
 for want in 'HARNESS_PACKAGE=' 'HARNESS_PACKAGES=-dnsmasq dnsmasq-full' \
 	'HARNESS_ARTIFACT=images-nopkg-main-glinet-gl-mt1300' \
-	'HARNESS_IB_IMAGE=docker.io/openwrt/imagebuilder:ramips-mt7621-main' 'HARNESS_IB_SETUP=true'; do
+	'HARNESS_IB_IMAGE=ghcr.io/test/openwrt-imagebuilder:ramips-mt7621-main' 'HARNESS_IB_RELEASE=' 'HARNESS_IB_GRACE_DAYS=1'; do
 	if grep -qxF -- "${want}" "${work}/out"; then
 		record "resolve-image without a package has ${want}" 0 ""
 	else
@@ -813,6 +820,84 @@ cp -R "${ib}" "${ib_nopinned}"
 rm "${ib_nopinned}/local-world-pinned"
 script_case "collect: missing world of the install fails" 1 '' collect_in "${ib_nopinned}"
 unset HARNESS_IMAGE_GLOBS
+
+# --- refresh-plan.sh and resolve-refresh.sh ---------------------------------
+# The jobs of the daily refresh: the matrices from lines, targets and profiles,
+# and the data of one image.
+rpl=${script_dir}/refresh-plan.sh
+rr=${script_dir}/resolve-refresh.sh
+
+# Expect a key=value line of ${work}/out to hold JSON that jq turns into text.
+#
+# Arguments:
+#   $1  case name   $2 key   $3 jq filter   $4 expected text
+plan_has() {
+	ph_got=$(sed -n -e "s/^$2=//p" "${work}/out" | jq -r "$3") || ph_got="jq failed"
+	if [ "${ph_got}" = "$4" ]; then
+		record "$1" 0 ""
+	else
+		record "$1" 1 "got ${ph_got}"
+	fi
+}
+
+# Expect ${work}/out to hold the line.
+#
+# Arguments:
+#   $1  case name   $2 line
+out_has() {
+	if grep -qxF -- "$2" "${work}/out"; then
+		record "$1 has $2" 0 ""
+	else
+		record "$1 has $2" 1 "$(cat "${work}/out")"
+	fi
+}
+
+script_case "refresh-plan two lines" 0 ANY env HARNESS_REFRESH_LINES="25.12 main" \
+	HARNESS_PROFILES="x86/64/generic mediatek/filogic/bananapi_bpi-r3 mediatek/filogic/acer_predator-w6x-stock" HARNESS_TARGETS=x86-64 "${rpl}"
+plan_has "refresh-plan SDK images" sdk_matrix '.include | map(.line + ":" + .arch) | sort | join(" ")' \
+	"25.12:aarch64_cortex-a53 25.12:x86_64 main:aarch64_cortex-a53 main:x86_64"
+plan_has "refresh-plan Image Builder images" ib_matrix \
+	'.include | map(.line + ":" + .target + "/" + .subtarget) | sort | join(" ")' \
+	"25.12:mediatek/filogic 25.12:x86/64 main:mediatek/filogic main:x86/64"
+out_has "refresh-plan two lines" "sdk_count=4"
+out_has "refresh-plan two lines" "ib_count=4"
+script_case "refresh-plan without profiles has no Image Builder image" 0 ANY env HARNESS_REFRESH_LINES=main \
+	HARNESS_PROFILES= HARNESS_TARGETS=x86-64 "${rpl}"
+out_has "refresh-plan without profiles" "sdk_count=1"
+out_has "refresh-plan without profiles" "ib_count=0"
+script_case "refresh-plan an unknown line" 1 '' env HARNESS_REFRESH_LINES="main nope" \
+	HARNESS_PROFILES= HARNESS_TARGETS=x86-64 "${rpl}"
+script_case "refresh-plan a line listed twice" 1 '' env HARNESS_REFRESH_LINES="main main" \
+	HARNESS_PROFILES= HARNESS_TARGETS=x86-64 "${rpl}"
+script_case "refresh-plan an unknown profile" 1 '' env HARNESS_REFRESH_LINES=main \
+	HARNESS_PROFILES=x86/64/nosuchboard HARNESS_TARGETS=x86-64 "${rpl}"
+script_case "refresh-plan a glob in the lines" 1 '' env HARNESS_REFRESH_LINES='ma*' \
+	HARNESS_PROFILES= HARNESS_TARGETS=x86-64 "${rpl}"
+fails_case "refresh-plan without lines" env -u HARNESS_REFRESH_LINES "${rpl}"
+
+script_case "resolve-refresh sdk" 0 ANY "${rr}" sdk main x86_64
+for want in HARNESS_IMG_KIND=sdk HARNESS_IMG_MODE=build HARNESS_IMG_CONTAINER=ghcr.io/test/openwrt-sdk \
+	HARNESS_IMG_TAG=x86_64-main HARNESS_IMG_IMAGE=ghcr.io/test/openwrt-sdk:x86_64-main \
+	HARNESS_IMG_BASE=docker.io/openwrt/sdk:x86_64-main HARNESS_IMG_DOCKERFILE=docker/sdk-image HARNESS_IMG_RELEASE=; do
+	out_has "resolve-refresh sdk" "${want}"
+done
+script_case "resolve-refresh ib of a release line mirrors the release container" 0 ANY "${rr}" ib 25.12 x86 64
+for want in HARNESS_IMG_KIND=ib HARNESS_IMG_MODE=mirror HARNESS_IMG_TAG=x86-64-openwrt-25.12 \
+	HARNESS_IMG_IMAGE=ghcr.io/test/openwrt-imagebuilder:x86-64-openwrt-25.12 \
+	HARNESS_IMG_BASE=docker.io/openwrt/imagebuilder:x86-64-25.12.6 HARNESS_IMG_DOCKERFILE= HARNESS_IMG_RELEASE=25.12.6; do
+	out_has "resolve-refresh ib 25.12" "${want}"
+done
+script_case "resolve-refresh ib of a snapshot line builds from the snapshot container" 0 ANY "${rr}" ib main ramips mt7621
+for want in HARNESS_IMG_MODE=build HARNESS_IMG_TAG=ramips-mt7621-main \
+	HARNESS_IMG_BASE=docker.io/openwrt/imagebuilder:ramips-mt7621-main HARNESS_IMG_DOCKERFILE=docker/ib-image HARNESS_IMG_RELEASE=; do
+	out_has "resolve-refresh ib main" "${want}"
+done
+script_case "resolve-refresh unknown line" 1 '' "${rr}" ib nope x86 64
+script_case "resolve-refresh target with a slash" 1 '' "${rr}" ib main x86/64 generic
+script_case "resolve-refresh unknown kind" 1 '' "${rr}" kernel main x86_64
+script_case "resolve-refresh sdk with an upper case container is lowercased" 0 ANY env HARNESS_SDK_CONTAINER=ghcr.io/Test/Openwrt-SDK "${rr}" sdk main x86_64
+out_has "resolve-refresh sdk lowercased" "HARNESS_IMG_CONTAINER=ghcr.io/test/openwrt-sdk"
+script_case "resolve-refresh ib without a container" 1 '' env -u HARNESS_IB_CONTAINER "${rr}" ib main x86 64
 
 echo
 if [ "${failures}" -ne 0 ]; then

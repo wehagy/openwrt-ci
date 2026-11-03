@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Responsibility: the label keys of the harness SDK image and the check of the
+# Responsibility: the label keys of the harness SDK and Image Builder images and the check of the
 # values read back from them (sourced, not run).
 #
 # Usage:
@@ -32,3 +32,12 @@ check_sdk_archive() {
 	*) ;;
 	esac
 }
+
+# Labels the daily refresh adds to an image next to the ones above.
+# upstream-url: address of the sha256sums that lists the archive;
+# source-digest, source-image, release: the official container that a release
+# Image Builder is a copy of.
+export label_upstream=io.github.wehagy.openwrt-ci.upstream-url
+export label_source_digest=io.github.wehagy.openwrt-ci.source-digest
+export label_source_image=io.github.wehagy.openwrt-ci.source-image
+export label_release=io.github.wehagy.openwrt-ci.release

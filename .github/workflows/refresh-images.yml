@@ -1,0 +1,247 @@
+# Reusable workflow: bring the harness images on GHCR up to date with their
+# upstream. It is the ONLY workflow that writes them; build.yml and images.yml
+# only read them. The caller schedules it daily (and by hand) and gives the
+# lists; this workflow resolves the architectures and Image Builders from them
+# the way build.yml and images.yml do:
+#
+#   - one SDK image ghcr.io/<owner>/openwrt-sdk:<arch>-<suffix> per line and
+#     package architecture (the architectures of the QEMU test targets and of
+#     the image profiles), built from the official SDK container with
+#     setup.sh already run;
+#   - one Image Builder image ghcr.io/<owner>/openwrt-imagebuilder:<target>-
+#     <subtarget>-<suffix> per line and target of the profiles: a copy of the
+#     official release container (setup.sh already run in it) for a release
+#     line, the official snapshot container with setup.sh run once for a
+#     snapshot line.
+#
+# An image is rebuilt only when its upstream changed (the sha256 of the SDK or
+# Image Builder archive, or the digest of the mirrored container) or its recipe
+# did, or with `force`; otherwise it is left as it is. The image it supersedes
+# stays as <tag>-prev. See scripts/image-refresh.sh.
+#
+# Security: the jobs with `packages: write` run only scripts of the harness
+# (checked out at ci_ref) and the official OpenWrt containers; they check out
+# nothing of the caller and run no package, feed or pull request code, and
+# use no dependency cache (no setup-uv, no actions/cache). The caller must
+# grant `packages: write` to the job that calls this workflow, and its
+# repository needs write (admin, to delete the superseded -prev versions)
+# access to both packages (README, "Image access").
+name: refresh-images
+
+on:
+  workflow_call:
+    inputs:
+      lines:
+        description: >-
+          Lines of harness/lines.yml to refresh, separated by spaces (e.g.
+          "main 25.12")
+        type: string
+        required: true
+      targets:
+        description: >-
+          QEMU test targets whose architectures get an SDK image (same value
+          as the targets input of test.yml). Empty: all targets of
+          harness/targets.yml.
+        type: string
+        required: false
+        default: ""
+      profiles:
+        description: >-
+          Image profiles, separated by spaces or newlines, each
+          <target>/<subtarget>/<profile>[:too-big] (same format as the profiles
+          input of images.yml): their architectures get an SDK image and their
+          targets an Image Builder image. Empty: none.
+        type: string
+        required: false
+        default: ""
+      force:
+        description: Rebuild the images even when they are up to date
+        type: boolean
+        required: false
+        default: false
+      sdk_container:
+        description: GHCR repository of the harness SDK image, ghcr.io/<owner>/<name> (lowercase)
+        type: string
+        required: false
+        default: ghcr.io/wehagy/openwrt-sdk
+      ib_container:
+        description: GHCR repository of the harness ImageBuilder image, ghcr.io/<owner>/<name> (lowercase)
+        type: string
+        required: false
+        default: ghcr.io/wehagy/openwrt-imagebuilder
+      ci_ref:
+        description: >-
+          Ref (branch, tag or commit) of wehagy/openwrt-ci the scripts, harness data
+          and Dockerfiles are checked out from; use the same ref as the `uses:` of
+          this workflow
+        type: string
+        required: false
+        default: main
+
+permissions:
+  contents: read
+
+# The repository the harness is checked out from (first step of every job).
+env:
+  HARNESS_CI_REPOSITORY: wehagy/openwrt-ci
+
+jobs:
+  # The matrices, and the self-tests of the code the refresh jobs run. No
+  # image is touched here; an unknown line or profile fails before any build.
+  plan:
+    name: plan
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash # adds pipefail
+    outputs:
+      sdk_matrix: ${{ steps.plan.outputs.sdk_matrix }}
+      sdk_count: ${{ steps.plan.outputs.sdk_count }}
+      ib_matrix: ${{ steps.plan.outputs.ib_matrix }}
+      ib_count: ${{ steps.plan.outputs.ib_count }}
+    steps:
+      - name: Check out the harness
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ env.HARNESS_CI_REPOSITORY }}
+          ref: ${{ inputs.ci_ref }}
+          path: ci-base
+          persist-credentials: false
+
+      - name: Report revisions
+        env:
+          HARNESS_CI_REF: ${{ inputs.ci_ref }}
+        run: ci-base/scripts/report-revisions.sh
+
+      # The decision to rebuild or reuse, the readers of the official
+      # container's sha256sums and the stale warning.
+      - name: Image decision self-test
+        run: ci-base/scripts/image-decide-selftest.sh
+
+      # A stub gh: a 404 on the delete of the superseded version is success
+      # only when a fresh listing no longer has it; every other error fails.
+      - name: Version prune self-test
+        run: ci-base/scripts/ghcr-versions-selftest.sh
+
+      # A fake setup.sh: the retry of a sha256 mismatch of the archive
+      # (snapshot published file by file) is bounded and fail-closed; the
+      # Dockerfiles of the images run setup.sh through it.
+      - name: Setup retry self-test
+        run: ci-base/scripts/ib-setup-selftest.sh
+
+      - name: Image inputs self-test
+        run: ci-base/scripts/image-inputs-selftest.sh
+
+      - name: Plan the images
+        id: plan
+        env:
+          HARNESS_REFRESH_LINES: ${{ inputs.lines }}
+          HARNESS_PROFILES: ${{ inputs.profiles }}
+          HARNESS_TARGETS: ${{ inputs.targets }}
+        run: |
+          planned=$(ci-base/scripts/refresh-plan.sh)
+          echo "${planned}" | tee -a "${GITHUB_OUTPUT}"
+          {
+            echo "### images to refresh"
+            echo "- SDK images: $(echo "${planned}" | sed -n -e 's/^sdk_count=//p')"
+            echo "- Image Builder images: $(echo "${planned}" | sed -n -e 's/^ib_count=//p')"
+            echo "- force: ${{ inputs.force }}"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  # One job per SDK image. No `concurrency` group: GitHub keeps one running and
+  # one pending job per group and cancels the older pending one.
+  # scripts/image-refresh.sh decides again after its local build, just before
+  # the push, and discards the build if another job pushed an identical image.
+  sdk:
+    if: ${{ needs.plan.outputs.sdk_count != '0' }}
+    needs: plan
+    name: sdk ${{ matrix.line }} ${{ matrix.arch }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.sdk_matrix) }}
+    defaults:
+      run:
+        shell: bash # adds pipefail
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      HARNESS_SDK_CONTAINER: ${{ inputs.sdk_container }}
+      HARNESS_FORCE: ${{ inputs.force }}
+    steps:
+      - name: Check out the harness
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ env.HARNESS_CI_REPOSITORY }}
+          ref: ${{ inputs.ci_ref }}
+          path: ci-base
+          persist-credentials: false
+
+      - name: Report revisions
+        env:
+          HARNESS_CI_REF: ${{ inputs.ci_ref }}
+        run: ci-base/scripts/report-revisions.sh
+
+      # Validates the inputs; the output is written to $GITHUB_ENV only when
+      # the script succeeded.
+      - name: Resolve line and arch
+        env:
+          LINE: ${{ matrix.line }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          resolved=$(ci-base/scripts/resolve-refresh.sh sdk "${LINE}" "${ARCH}")
+          echo "${resolved}" | tee -a "${GITHUB_ENV}"
+
+      - name: Reuse or rebuild the SDK image
+        run: ci-base/scripts/image-refresh.sh
+
+  ib:
+    if: ${{ needs.plan.outputs.ib_count != '0' }}
+    needs: plan
+    name: imagebuilder ${{ matrix.line }} ${{ matrix.target }}/${{ matrix.subtarget }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.ib_matrix) }}
+    defaults:
+      run:
+        shell: bash # adds pipefail
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      HARNESS_IB_CONTAINER: ${{ inputs.ib_container }}
+      HARNESS_FORCE: ${{ inputs.force }}
+    steps:
+      - name: Check out the harness
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ env.HARNESS_CI_REPOSITORY }}
+          ref: ${{ inputs.ci_ref }}
+          path: ci-base
+          persist-credentials: false
+
+      - name: Report revisions
+        env:
+          HARNESS_CI_REF: ${{ inputs.ci_ref }}
+        run: ci-base/scripts/report-revisions.sh
+
+      - name: Resolve line and target
+        env:
+          LINE: ${{ matrix.line }}
+          TARGET: ${{ matrix.target }}
+          SUBTARGET: ${{ matrix.subtarget }}
+        run: |
+          resolved=$(ci-base/scripts/resolve-refresh.sh ib "${LINE}" "${TARGET}" "${SUBTARGET}")
+          echo "${resolved}" | tee -a "${GITHUB_ENV}"
+
+      - name: Reuse, copy or rebuild the ImageBuilder image
+        run: ci-base/scripts/image-refresh.sh

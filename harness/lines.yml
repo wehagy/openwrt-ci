@@ -9,11 +9,13 @@
 #                            official container (docker.io/openwrt/sdk) and of
 #                            the harness image derived from it
 #                            (ghcr.io/<owner>/openwrt-sdk:<arch>-<suffix>)
-#   sdk_max_age_days         whole days (1-365) a harness SDK image is reused;
-#                            an older, missing or force-refreshed image is
-#                            rebuilt before the build (scripts/sdk-image-ensure.sh,
-#                            rule in scripts/lib/sdk-age.sh); the build pins
-#                            the image by digest and does not re-apply it
+#   image_grace_days         whole days (1-365) after which a harness SDK or
+#                            Image Builder image that differs from its upstream
+#                            is reported stale (a warning annotation, never a
+#                            failure; scripts/image-stale-check.sh). The daily
+#                            refresh (refresh-images.yml) rebuilds an image
+#                            when its upstream changed, whatever its age; the
+#                            builds only read it
 #   packages_branch          branch of the openwrt/packages feed
 #   imagebuilder_tag_suffix  suffix of the ImageBuilder container tag of a
 #                            "snapshot" line (a tag that ships only setup.sh);
@@ -38,7 +40,7 @@
 #   image_base_url           directory holding the images and sha256sums
 #   feed_base_url            apk feed (index.json and *.apk)
 #
-# The build workflow reads sdk_tag_suffix, sdk_max_age_days and
+# The build workflow reads sdk_tag_suffix, image_grace_days and
 # packages_branch; the image workflow reads release_source,
 # imagebuilder_tag_suffix and, for a release, releases_index_url and
 # release_regex; the QEMU test workflow reads the other keys. Each line has the
@@ -47,7 +49,7 @@
 lines:
   "25.12":
     sdk_tag_suffix: openwrt-25.12
-    sdk_max_age_days: 1
+    image_grace_days: 1
     packages_branch: openwrt-25.12
     imagebuilder_tag_suffix: openwrt-25.12
     release_source: releases
@@ -57,7 +59,7 @@ lines:
     feed_base_url: https://downloads.openwrt.org/releases/{release}/packages/{arch}/packages
   main:
     sdk_tag_suffix: main
-    sdk_max_age_days: 1
+    image_grace_days: 1
     packages_branch: master
     imagebuilder_tag_suffix: main
     release_source: snapshot
